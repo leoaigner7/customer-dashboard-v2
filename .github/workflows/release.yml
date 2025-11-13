@@ -35,7 +35,7 @@ jobs:
     - name: Prepare customer package
       run: |
         mkdir package
-         .cp deploy/docker-compose.yml package/
+         cp deploy/docker-compose.yml package/
          cp deploy/.env.example package/.env
          echo "APP_VERSION=${VERSION}" >> package/.env
          
