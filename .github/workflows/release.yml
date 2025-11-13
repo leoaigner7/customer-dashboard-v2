@@ -35,14 +35,19 @@ jobs:
     - name: Prepare customer package
       run: |
         mkdir package
-        cp deploy/docker-compose.yml package/
-        cp deploy/.env.example package/.env
-        echo "APP_VERSION=${VERSION}" >> package/.env
-        cp deploy/update.* package/
-        cp README.md package/
-        echo ${VERSION} > package/VERSION.txt
-        cd package
-        zip -r ../customer-dashboard-${VERSION}.zip .
+         .cp deploy/docker-compose.yml package/
+         cp deploy/.env.example package/.env
+         echo "APP_VERSION=${VERSION}" >> package/.env
+         
+         # *** DIE WICHTIGE ZEILE ***
+         cp -r app package/app
+         
+         cp deploy/update.* package/
+         cp deploy/README_KUNDE.md package/
+         echo ${VERSION} > package/VERSION.txt
+         cd package
+         zip -r ../customer-dashboard-${VERSION}.zip .
+         
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
