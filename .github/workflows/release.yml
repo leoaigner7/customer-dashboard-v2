@@ -43,7 +43,6 @@ jobs:
          cp -r app package/app
          
          cp deploy/update.* package/
-         cp deploy/README.md package/
          echo ${VERSION} > package/VERSION.txt
          cd package
          zip -r ../customer-dashboard-${VERSION}.zip .
