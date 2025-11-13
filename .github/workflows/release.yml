@@ -56,27 +56,27 @@ jobs:
           docker push $IMAGE_NAME:latest
 
       ############################################################
-      # CREATE ZIP PACKAGE FOR CUSTOMERS (FIXED VERSION)
+      # CREATE FULL CUSTOMER PACKAGE (ALL FILES)
       ############################################################
       - name: Create ZIP package
         run: |
-          # create folders
-          mkdir -p package/deploy
+          mkdir -p package
 
-          # copy docker-compose
-          cp deploy/docker-compose.yml package/deploy/
+          # Copy ALL relevant project files
+          cp -R backend package/backend
+          cp -R frontend package/frontend
+          cp -R deploy package/deploy
+          cp Dockerfile package/Dockerfile
+          cp README.md package/README.md
 
-          # create .env file based on .env.example
+          # Generate .env inside deploy folder
           cp deploy/.env.example package/deploy/.env
-
-          # inject version into .env
           echo "APP_VERSION=${{ env.VERSION }}" >> package/deploy/.env
 
-          # copy optional files
-          cp README.md package/README.md
-          cp deploy/update.* package/deploy/ 2>/dev/null || true
+          # Add version file
+          echo "${{ env.VERSION }}" > package/VERSION.txt
 
-          # zip it
+          # Create ZIP
           cd package
           zip -r ../customer-dashboard-v2-${{ env.VERSION }}.zip .
 
