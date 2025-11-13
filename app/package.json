@@ -1,0 +1,14 @@
+{
+    "name": "customer-dashboard",
+    "version": "1.0.0",
+    "description": "Customer Dashboard Web App",
+    "main": "server.js",
+    "scripts": {
+      "start": "node server.js"
+    },
+    "dependencies": {
+      "express": "^4.18.2",
+      "dotenv": "^16.4.0"
+    }
+  }
+  
