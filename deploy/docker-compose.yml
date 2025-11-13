@@ -1,9 +1,11 @@
 version: "3.9"
 
 services:
-  dashboard:
+  dashboard_v2:
     image: ghcr.io/leoaigner7/customer-dashboard:${APP_VERSION}
     env_file: .env
     ports:
-      - "8080:3000"
+      - "8090:3000"
+    volumes:
+      - ./data:/app/data
     restart: unless-stopped

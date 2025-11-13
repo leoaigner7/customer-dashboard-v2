@@ -1,5 +1,5 @@
 @echo off
-echo Starte Deployment...
+echo Starte Deployment (Version 2)...
 
 for /f "tokens=1,2 delims==" %%a in (.env) do (
   if "%%a"=="APP_VERSION" set VERSION=%%b
@@ -8,5 +8,5 @@ for /f "tokens=1,2 delims==" %%a in (.env) do (
 docker compose pull
 docker compose up -d
 
-echo Deployment Version %VERSION% abgeschlossen!
+echo Deployment V2 Version %VERSION% abgeschlossen!
 pause

@@ -1,10 +1,9 @@
-#!/usr/bin/env bash
-set -e
+#!/bin/bash
+echo "Starte Deployment Version 2..."
 
-echo "Starte Deployment..."
 source .env
 
 docker compose pull
 docker compose up -d
 
-echo "Deployment Version $APP_VERSION abgeschlossen!"
+echo "Deployment V2 Version $APP_VERSION abgeschlossen!"
