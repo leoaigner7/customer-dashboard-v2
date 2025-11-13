@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Version</title>
+</head>
+<body>
+  <h1>Installierte Version:</h1>
+  <p id="version">Lade...</p>
+
+  <script>
+    fetch("/api/version")
+      .then(r => r.json())
+      .then(d => {
+        document.getElementById("version").innerText = d.version;
+      });
+  </script>
+</body>
+</html>
