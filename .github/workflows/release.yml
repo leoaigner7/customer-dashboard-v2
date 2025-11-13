@@ -1,91 +1,74 @@
-name: Build & Release
+name: Release V2
 
 on:
   push:
     tags:
-      - "*"
+      - '*'
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+      packages: write
+
+    env:
+      IMAGE_NAME: ghcr.io/leoaigner7/customer-dashboard-v2
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
-    - name: Get version
-      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+      ############################################################
+      # EXTRACT VERSION FROM TAG
+      ############################################################
+      - name: Get Version from Tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
-    - name: Detect major version
-      run: echo "MAJOR=${VERSION%%.*}" >> $GITHUB_ENV
+      ############################################################
+      # LOGIN TO GHCR
+      ############################################################
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Login to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      ############################################################
+      # DOCKER BUILD & PUSH
+      ############################################################
+      - name: Build Docker Image
+        run: |
+          docker build \
+            -t $IMAGE_NAME:${VERSION} \
+            -t $IMAGE_NAME:latest \
+            .
 
-    ###########################################################################
-    # BUILD DOCKER IMAGE FOR BOTH V1 AND V2
-    ###########################################################################
+      - name: Push Docker Image
+        run: |
+          docker push $IMAGE_NAME:${VERSION}
+          docker push $IMAGE_NAME:latest
 
-    - name: Build image
-      run: |
-        docker build \
-          -t ghcr.io/${{ github.repository_owner }}/customer-dashboard:${VERSION} .
+      ############################################################
+      # CREATE ZIP PACKAGE FOR CUSTOMERS
+      ############################################################
+      - name: Create ZIP package
+        run: |
+          mkdir package
+          cp -R deploy package/deploy
+          cp README.md package/README.md
+          cd package
+          zip -r ../customer-dashboard-v2-${VERSION}.zip .
 
-    - name: Push image
-      run: docker push ghcr.io/${{ github.repository_owner }}/customer-dashboard:${VERSION}
-
-    ###########################################################################
-    # PACKAGE CREATION
-    ###########################################################################
-
-    - name: Create Release Package
-      run: |
-        mkdir package
-
-        if [ "$MAJOR" = "1" ]; then
-          echo "📦 Creating LEGACY v1 package..."
-
-          cp deploy/docker-compose.yml package/
-          cp deploy/.env.example package/.env
-          echo "APP_VERSION=${VERSION}" >> package/.env
-          echo ${VERSION} > package/VERSION.txt
-
-          # include old HTML version
-          mkdir package/app
-          cp -r app/public package/app/public
-          cp app/server.js package/app/server.js
-          cp app/package.json package/app/package.json
-
-        else
-          echo "🚀 Creating NEW v2 package..."
-
-          # docker compose v2 specific release folder
-          mkdir package/data
-
-          cp deploy/docker-compose.yml package/
-          cp deploy/.env.example package/.env
-          echo "APP_VERSION=${VERSION}" >> package/.env
-          echo ${VERSION} > package/VERSION.txt
-
-          # no source code included
-          # runtime uses GHCR image only
-        fi
-
-        cd package
-        zip -r ../customer-dashboard-${VERSION}.zip .
-
-    ###########################################################################
-    # UPLOAD RELEASE
-    ###########################################################################
-
-    - name: Upload Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ env.VERSION }}
-        files: customer-dashboard-${{ env.VERSION }}.zip
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ############################################################
+      # UPLOAD RELEASE
+      ############################################################
+      - name: Upload GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: customer-dashboard-v2-${VERSION}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
