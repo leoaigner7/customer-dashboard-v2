@@ -63,8 +63,8 @@ jobs:
           mkdir -p package
 
           # Copy ALL relevant project files
-          cp -R backend package/backend
-          cp -R frontend package/frontend
+          cp -R app/backend package/backend
+          cp -R app/frontend package/frontend
           cp -R deploy package/deploy
           cp Dockerfile package/Dockerfile
           cp README.md package/README.md
