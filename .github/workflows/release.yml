@@ -66,6 +66,10 @@ jobs:
           curl -f http://localhost:8080/ || (docker logs cd-test && exit 1)
           docker stop cd-test
 
+      - name: Debug container logs
+        if: failure()
+        run: docker logs cd-test || true
+        
       - name: Push image
         run: |
           docker push $REGISTRY/${IMAGE_NAME}:${VERSION}
