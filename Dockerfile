@@ -1,32 +1,26 @@
-# --- Stage 1: Frontend build (Vite + React) ---
-    FROM node:20-alpine AS frontend-build
-    WORKDIR /app/frontend
-    
-    # Dependencies installieren
-    COPY app/frontend/package*.json ./
-    RUN npm ci
-    
-    # Source-Code kopieren und bauen
-    COPY app/frontend .
-    RUN npm run build
-    
-    # --- Stage 2: Backend + statische Files ---
-    FROM node:20-alpine AS backend
-    WORKDIR /app/backend
-    
-    # Backend-Dependencies
-    COPY app/backend/package*.json ./
-    RUN npm ci --only=production
-    
-    # Backend-Code kopieren
-    COPY app/backend .
-    
-    # Frontend-Build in "public" legen (von dort kann server.js ausliefern)
+# --- Stage 1: Frontend Build ---
+FROM node:20 AS frontend-build
+WORKDIR /app/frontend
+
+COPY app/frontend/package*.json ./
+RUN npm install
+
+COPY app/frontend .
+RUN npm run build
+
+# --- Stage 2: Backend Build ---
+FROM node:20 AS backend
+WORKDIR /app/backend
+
+COPY app/backend/package*.json ./
+RUN npm install --production
+
+COPY app/backend .
+
+# Frontend Dist in den erwarteten Pfad kopieren
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
-    
-    ENV NODE_ENV=production
-    EXPOSE 3000
-    
-    # Passe den Startbefehl ggf. an, falls dein Backend anders heißt
-    CMD ["node", "src/server.js"]
-    
+
+ENV NODE_ENV=production
+EXPOSE 3000
+
+CMD ["node", "src/server.js"]
