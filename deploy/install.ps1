@@ -35,10 +35,12 @@ Write-Host "Version: $version"
 Write-Host "Port:    $port`n"
 
 # --- 2. Alte Container stoppen/entfernen -------------------------------
-
 Write-Host "Stoppe alte Dashboard-Container (falls vorhanden)..." -ForegroundColor Yellow
-docker compose -f $ComposeFile down || Write-Host "Keine bestehenden Container gefunden."
-
+try {
+    docker compose -f $ComposeFile down -ErrorAction Stoppe
+}catch {
+    Write-Host "keine bestehenden Container gefunden"
+}
 # --- 3. Neues Image ziehen & starten ----------------------------------
 
 Write-Host "`nPull aktuelles Image aus Registry..." -ForegroundColor Yellow
