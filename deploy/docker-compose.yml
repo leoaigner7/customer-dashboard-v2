@@ -1,7 +1,13 @@
+# Meherer dienste die die App builden 
 services:
+# komplette Dashboard-App als Docker-Container.
   dashboard:
+   #Image aus dem GitHub Container Registry (GHCR).
     image: ghcr.io/leoaigner7/customer-dashboard-v2:${APP_VERSION}
+    #Docker Compose lädt alle Variablen aus der .env Datei. || somit funktionieren APP_VERSION && APP_PORT
     env_file: .env
     ports:
+    #${APP_PORT:-8080} = wenn APP_PORT nicht definiert ist, nimm 8080 als Fallback
       - "${APP_PORT:-8080}:3000"
+      #    Docker versucht, den Container immer automatisch wieder zu starten, außer du stoppst ihn explizit
     restart: unless-stopped

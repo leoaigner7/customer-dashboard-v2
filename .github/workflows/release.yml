@@ -1,75 +1,115 @@
+#Anzeigename der Github Action in der Actions Übersicht
 name: Release V3
 
+# Workflow läuft nur dann, wenn ein Push auf ein Tag erfolgt - egal wie das Tag heißt   bsp: erstellst Tag: v1.2.3  git push origin v1.2.3
 on:
   push:
     tags:
       - '*'
 
+# Job läuft in einer ubunbtu Vm (Github Hosted Runner)
 jobs:
   build-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-      
     permissions:
+      #Job darf z.b releases erstellen, Datein Hochladen etc.
       contents: write
+      #Der Job darf Container Images in Github packages pushen
+      # Ohne diese rechte = Release Schritt oder Image pushen scheitern
       packages: write
 
     env:
+      # ghcr.io = Github Container Registry Domain
       REGISTRY: ghcr.io
+      #Setzt den Buildnamen dynamisch basierend auf den Owner des Repos. BSP: wenn Repo unter leoaigner7/customer-dashboard-v2 liegt dann ist dies der Image_name = name
       IMAGE_NAME: ${{ github.repository_owner }}/customer-dashboard-v2
+      #Zsm. mit Registry ergibt sich soetwas ghcr.io/leoaigner7/customer-dashboard-v2:VERSION
 
     steps:
+      #holt den Inhalt des Repos in den Runner
+      # Ohne diesen schritt kein Code den man bauen könnte
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set VERSION from tag
+      #entfernt präfix refs/tags/ -> Ergebnis dann nur noch v1.2.3
+
+      # schreibt variable "VERSION" in die Workflow Umgebung
+      #Umgebungsvariable steht ab jetzt in allen folgenden schritten zur Verfügung
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
+        #Installiert Node.js Version 20 im Runner
+        # Für alle späteren npm-Befehle wird diese Node-Version benötigt
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
       # --- Frontend build ------------------------------------------------
+        # Beide schritte laufen im Verzeichnis app/frontend
+        # führt "npm install" aus -> lädt alle benötigten Pakete aus package.json || package-lock.json
       - name: Install frontend deps
         working-directory: app/frontend
         run: npm install
-
+        
+        # führt "npm run build aus" typischerweise erzeugt das z.B einen dist- oder build-Ordner mit den fertigen statischen Assets
       - name: Build frontend
         working-directory: app/frontend
         run: npm run build
 
+        # Sicherstellen, dass das Frontend baubar ist und die Artefakte später im Docker Image landen können
+
       # --- Backend deps (Tests optional) ---------------------------------
+        # alle befehle beziehen sich auf das Backend-Verzeichnis
+
       - name: Install backend deps
         working-directory: app/backend
+        # Installiert die Backend-Abhängigkeiten 
         run: npm install
 
       # Hier könntest du noch Tests einhängen (npm test etc.)
 
       # --- Docker Image bauen & testen ----------------------------------
+        # loggt sich mit dem aktuellen Github-Benutzer bei ghcr.io ein
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
+          #Authentifizierung über Gitub_token (automatisch von Github zur verfügung gestellt)
+          # Docker push Befehle danach auf ghcr.io erlaubt
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build image
+      # docker build im Root des Repos
+      #Übergibt ein Build Argument "VERSION=${VERSION}" an das Dockerfile
+      #Image wird mit 2 Tags versehen. Grund: versionsspezifische als auch eine "immer aktuelle" Tag-Variante.
         run: |
           docker build \
             --build-arg VERSION=${VERSION} \
             -t $REGISTRY/${IMAGE_NAME}:${VERSION} \
             -t $REGISTRY/${IMAGE_NAME}:latest .
 
+        # startet das frisch gebaute Container Image und prüft, ob es HTTP-Anfragen erfolgreich beantworten kann
+
       - name: Test image (HTTP 200)
+        # läuft im Hintergrund, Mapped Port 3000 im Container auf Port 8080 auf dem Host. Containername CD-test
+        # Sleep 15: warte 15 Sekunden, damit der Server im Container hochfahren kann
+        # curl -f ruft http://localhost:8080/ auf und schlägt fehl, wenn der HTTP-statuscode nicht 2xx ist. fals curl fehlschlägt: logs des Containers werden ausgegeben und der Schritt mit Exitcode 1 beendet -> Job schlägt fehl
         run: |
           docker run -d -p 8080:3000 --name cd-test $REGISTRY/${IMAGE_NAME}:${VERSION}
           sleep 15
           curl -f http://localhost:8080/ || (docker logs cd-test && exit 1)
           docker stop cd-test
-
+# läuft nur wenn der Job bisher fehlgeschlagen ist. 
+#zur sicherheit ausgabe der cd-test logs
+# || true sorgt dafür , dass der Schritt selbst nicht noch einmal fehlschlägt, falls docker logs Probleme hat
       - name: Debug container logs
         if: failure()
         run: docker logs cd-test || true
 
+        # pusht beide Tags in die Registry -> erst wenn der Test davor erfolgreich war, werden Images gepusht. ---> Keine Kaputten Versionen in deiner Registry
+      
       - name: Push image
         run: |
           docker push $REGISTRY/${IMAGE_NAME}:${VERSION}
@@ -77,6 +117,16 @@ jobs:
 
       # --- Kundenpaket bauen --------------------------------------------
       - name: Prepare customer package
+      # neues Verzeichnis "package/deploy" in das alle Deploy scripte und Configs landen
+
+      # Kopiert docker-compose.yml ins Kundenpaket
+      #Kopiert .env example in .env:
+      # hängt "APP_VERSION=<VERSION>" an die .env an -> Kunde hat die Version im Env-File.
+
+      # für verschiedene Plattformen/Automatisierungen: install.ps1 (powershell windows) || update.sh (Linux) || update.bat (Windows batch)
+      # Kopiert die Readme.md in das Paket-Root  && schreibt die Version in package/Version.txt (z.b.  v1.2.3)
+
+      # wechselt in package || zipt alles darunter rekursiv zu ../customer-dashboard-v2-<VERSION>.zip.
         run: |
           mkdir -p package/deploy
 
@@ -90,12 +140,20 @@ jobs:
 
           cp README.md package/
           echo "${VERSION}" > package/VERSION.txt
-          
+
           cd package
           zip -r ../customer-dashboard-v2-${VERSION}.zip .
 
-      - name: Create GitHub Release
+
+      - name: Create GitHub 
+      # Nutzt die Action um einen Github Release anzulegen
         uses: softprops/action-gh-release@v2
         with:
+          #Nutzt die Version aus dem Tag (z.b. v1.2.3) als Tagname für den Release
           tag_name: ${{ env.VERSION }}
+          #hängt das gerade gebaute Kunden-Paket aks Release asset an
           files: customer-dashboard-v2-${{ env.VERSION }}.zip
+
+
+          #Ergebnis: Im Reiter "Releases" gibt es einen neuen Release mit Tag v1.2.3 && Asset:customer-dashboard-v2-v.1.2.3.zip.
+          #Parallel exisitiert das Docker Image in GHCR mit Tags v1.2.3 und latest
