@@ -79,12 +79,18 @@ jobs:
       - name: Prepare customer package
         run: |
           mkdir -p package/deploy
+
           cp deploy/docker-compose.yml package/deploy/
           cp deploy/.env.example package/deploy/.env
           echo "APP_VERSION=${VERSION}" >> package/deploy/.env
+          
           cp deploy/install.ps1 package/deploy/
+          cp deploy/update.sh package/deploy/
+          cp deploy/update.bat package/deploy/
+
           cp README.md package/
           echo "${VERSION}" > package/VERSION.txt
+          
           cd package
           zip -r ../customer-dashboard-v2-${VERSION}.zip .
 
