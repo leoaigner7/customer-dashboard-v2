@@ -36,7 +36,7 @@ jobs:
 
       # schreibt variable "VERSION" in die Workflow Umgebung
       #Umgebungsvariable steht ab jetzt in allen folgenden schritten zur Verfügung
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
         #Installiert Node.js Version 20 im Runner
         # Für alle späteren npm-Befehle wird diese Node-Version benötigt

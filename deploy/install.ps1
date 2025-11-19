@@ -23,6 +23,12 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
+try {
+    docker info | Out-Null
+} catch {
+    Write-Host "ERROR: Docker läuft nicht. Bitte Docker Desktop starten." -ForegroundColor Red
+    exit 1
+}
 # prüft ob eine Datei mit dem namen $Composefile existiert
 # Standard: docker-compose.yml -> sonst abbruch
 if (-not (Test-Path ".\${ComposeFile}")) {
@@ -40,6 +46,8 @@ $envLines   = Get-Content .\.env
 # APP_VERSION aus den geladenen .env-Zeilen extrahieren. Erwartet eine Zeile wie:  APP_VERSION=v1.2.3 || Findet die Zeile mit APP_VERSION= || Entfernt den Präfix "APP_VERSION=" || Ergebnis ist z.B. "v1.2.3" || Falls kein Eintrag gefunden wird, wird "<unbekannt>" verwendet ||(nur für Anzeige beim Kunden, nicht kritisch).
 
 $version    = ($envLines | Where-Object { $_ -match '^APP_VERSION=' }) -replace 'APP_VERSION=',''
+$version = $version.TrimStart("v")     # <--- Entfernt führendes v automatisch
+
 if (-not $version) { $version = "<unbekannt>" }
 
 #sucht: APP_PORT=xxxx || entfernt APP_PORT=   || -> wenn nicht gefunden -> default 8080 || Wichtig, damit der HTTP-Check später weiß, wo er prüfen soll.
@@ -54,7 +62,7 @@ Write-Host "Stoppe alte Dashboard-Container (falls vorhanden)..." -ForegroundCol
 
 # führt aus: docker compose -f docker-compose.yml down
 try {
-    docker compose -f $ComposeFile down -ErrorAction Stoppe
+    docker compose -f $ComposeFile down -ErrorAction Stop
 }catch {
     Write-Host "keine bestehenden Container gefunden"
 }
