@@ -1,61 +1,74 @@
-@echo off
-echo ----------------------------------------
-echo     Customer Dashboard Update (WIN)
-echo ----------------------------------------
+# ----------------------------------------
+# Customer Dashboard Update Script (Windows)
+# ----------------------------------------
 
-REM Prüfen ob .env vorhanden ist
-IF NOT EXIST ".env" (
-    echo ❌ Fehler: .env nicht gefunden!
-    pause
-    exit /b 1
-)
+Write-Host "----------------------------------------"
+Write-Host "  Customer Dashboard Update (Windows)"
+Write-Host "----------------------------------------"
 
-REM Version & Port aus .env lesen
-for /f "tokens=1,2 delims==" %%a in (.env) do (
-    if "%%a"=="APP_VERSION" set APP_VERSION=%%b
-    if "%%a"=="APP_PORT" set APP_PORT=%%b
-)
+$ErrorActionPreference = "Stop"
+$logPath = "logs/update.log"
+New-Item -ItemType Directory -Path "logs" -Force | Out-Null
 
-echo 📄 Konfiguration geladen:
-echo    APP_VERSION = %APP_VERSION%
-echo    APP_PORT    = %APP_PORT%
-echo.
+# .env prüfen
+if (-Not (Test-Path ".env")) {
+    Write-Host "❌ Fehler: .env nicht gefunden!"
+    exit 1
+}
 
-REM Docker vorhanden?
-docker --version >nul 2>&1
-IF ERRORLEVEL 1 (
-    echo ❌ Docker ist nicht installiert!
-    pause
-    exit /b 1
-)
+# .env laden
+Get-Content .env | ForEach-Object {
+    if ($_ -match "^(.*?)=(.*)$") {
+        Set-Variable -Name $matches[1] -Value $matches[2]
+    }
+}
 
-REM Docker Compose vorhanden?
-docker compose version >nul 2>&1
-IF ERRORLEVEL 1 (
-    echo ❌ Docker Compose ist nicht installiert!
-    pause
-    exit /b 1
-)
+# VERSION.txt vergleichen (offline)
+if (Test-Path "VERSION.txt") {
+    $targetVersion = Get-Content VERSION.txt
+    if ($APP_VERSION -ne $targetVersion) {
+        Write-Host "🔄 Update erforderlich: $APP_VERSION → $targetVersion"
+        (Get-Content .env) -replace "^APP_VERSION=.*", "APP_VERSION=$targetVersion" | Set-Content .env
+        $APP_VERSION = $targetVersion
+    } else {
+        Write-Host "✅ Keine Aktualisierung nötig."
+        exit 0
+    }
+}
 
-echo 🐳 Lade Image: ghcr.io/leoaigner7/customer-dashboard-v2:%APP_VERSION%
+# Docker prüfen
+if (-not (Get-Command "docker" -ErrorAction SilentlyContinue)) {
+    Write-Host "❌ Docker ist nicht installiert!"
+    exit 1
+}
+if (-not (docker compose version)) {
+    Write-Host "❌ Docker Compose ist nicht installiert!"
+    exit 1
+}
+
+$image = "$APP_REGISTRY/leoaigner7/customer-dashboard-v2:$APP_VERSION"
+Write-Host "🐳 Lade Image: $image"
 docker compose pull
 
-echo 🔁 Starte Container neu ...
+Write-Host "🔁 Starte Container neu ..."
 docker compose up -d
 
-echo ⏳ Warte 5 Sekunden ...
-timeout /t 5 >nul
+Start-Sleep -Seconds 5
 
-echo 🌐 Pruefe Erreichbarkeit: http://localhost:%APP_PORT%/
-curl -f http://localhost:%APP_PORT%/ >nul 2>&1
-IF ERRORLEVEL 1 (
-    echo ❌ Anwendung NICHT erreichbar!
-    echo 🔍 Logs:
+Write-Host "🌐 Prüfe Erreichbarkeit: http://localhost:$APP_PORT/"
+try {
+    $result = Invoke-WebRequest -Uri "http://localhost:$APP_PORT/" -UseBasicParsing -TimeoutSec 5
+    if ($result.StatusCode -ge 200 -and $result.StatusCode -lt 300) {
+        Write-Host "✅ Update erfolgreich! Version $APP_VERSION läuft."
+    } else {
+        throw "HTTP Statuscode: $($result.StatusCode)"
+    }
+} catch {
+    Write-Host "❌ Anwendung NICHT erreichbar!"
     docker compose logs --tail=50
-    pause
-    exit /b 1
-)
+    exit 1
+}
 
-echo 🎉 Update erfolgreich! Version %APP_VERSION% läuft.
-echo ----------------------------------------
-pause
+Write-Host "----------------------------------------"
+Write-Host "🎉 Fertig!"
+Write-Host "----------------------------------------"

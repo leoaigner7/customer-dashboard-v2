@@ -10,7 +10,7 @@ on:
 # Job läuft in einer ubunbtu Vm (Github Hosted Runner)
 jobs:
   build-release:
-    runs-on: ubuntu-      
+    runs-on: ubuntu-latest
     permissions:
       #Job darf z.b releases erstellen, Datein Hochladen etc.
       contents: write
@@ -68,6 +68,8 @@ jobs:
         run: npm install
 
       # Hier könntest du noch Tests einhängen (npm test etc.)
+      # - name: Run tests
+      #   run: npm test
 
       # --- Docker Image bauen & testen ----------------------------------
         # loggt sich mit dem aktuellen Github-Benutzer bei ghcr.io ein
@@ -156,4 +158,4 @@ jobs:
 
 
           #Ergebnis: Im Reiter "Releases" gibt es einen neuen Release mit Tag v1.2.3 && Asset:customer-dashboard-v2-v.1.2.3.zip.
-          #Parallel exisitiert das Docker Image in GHCR mit Tags v1.2.3 und latest
+          #Parallel exisitiert das Docker Image in GHCR mit Tags v1.2.3
