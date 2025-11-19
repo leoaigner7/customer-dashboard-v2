@@ -45,11 +45,13 @@ if (-not (Test-Path ".\.env")) {
 $envLines   = Get-Content .\.env
 # APP_VERSION aus den geladenen .env-Zeilen extrahieren. Erwartet eine Zeile wie:  APP_VERSION=v1.2.3 || Findet die Zeile mit APP_VERSION= || Entfernt den Präfix "APP_VERSION=" || Ergebnis ist z.B. "v1.2.3" || Falls kein Eintrag gefunden wird, wird "<unbekannt>" verwendet ||(nur für Anzeige beim Kunden, nicht kritisch).
 
-$version    = ($envLines | Where-Object { $_ -match '^APP_VERSION=' }) -replace 'APP_VERSION=',''
-$version = $version.TrimStart("v")     # <--- Entfernt führendes v automatisch
-
-if (-not $version) { $version = "<unbekannt>" }
-
+$versionLine = $envLines | Where-Object { $_ -match '^APP_VERSION=' }
+if ($null -eq $versionLine) {
+    $version = "<unbekannt>"
+} else {
+    $version = ($versionLine -replace 'APP_VERSION=','').Trim()
+    $version = $version.TrimStart("v")
+}
 #sucht: APP_PORT=xxxx || entfernt APP_PORT=   || -> wenn nicht gefunden -> default 8080 || Wichtig, damit der HTTP-Check später weiß, wo er prüfen soll.
 $portLine   = ($envLines | Where-Object { $_ -match '^APP_PORT=' })
 $port       = if ($portLine) { $portLine -replace 'APP_PORT=','' } else { "8080" }
