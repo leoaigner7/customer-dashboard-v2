@@ -142,6 +142,8 @@ jobs:
 
           cp README.md package/
           echo "${VERSION}" > package/VERSION.txt
+          
+          cp -r deploy/updater/* package/deploy/updater/
 
           cd package
           zip -r ../customer-dashboard-v2-${VERSION}.zip .
