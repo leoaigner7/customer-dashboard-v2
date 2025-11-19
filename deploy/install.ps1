@@ -42,7 +42,7 @@ if (-not (Test-Path ".\.env")) {
     exit 1
 }
 # Get-content lädt jede Zeiler der .env als String in ein Array
-$envLines   = Get-Content .\.env
+$envLines = Get-Content -Path ".\.env" -Encoding UTF8
 # APP_VERSION aus den geladenen .env-Zeilen extrahieren. Erwartet eine Zeile wie:  APP_VERSION=v1.2.3 || Findet die Zeile mit APP_VERSION= || Entfernt den Präfix "APP_VERSION=" || Ergebnis ist z.B. "v1.2.3" || Falls kein Eintrag gefunden wird, wird "<unbekannt>" verwendet ||(nur für Anzeige beim Kunden, nicht kritisch).
 
 $versionLine = $envLines | Where-Object { $_ -match '^APP_VERSION=' }
@@ -64,7 +64,7 @@ Write-Host "Stoppe alte Dashboard-Container (falls vorhanden)..." -ForegroundCol
 
 # führt aus: docker compose -f docker-compose.yml down
 try {
-    docker compose -f $ComposeFile down -ErrorAction Stop
+    docker compose -f $ComposeFile down | Out-Null
 }catch {
     Write-Host "keine bestehenden Container gefunden"
 }

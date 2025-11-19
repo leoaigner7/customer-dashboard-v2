@@ -77,7 +77,7 @@ if ($latestVersion -eq $currentVersion) {
     exit 0
 }
 
-Write-Log "Update verfuegbar: $currentVersion → $latestVersion"
+Write-Log "Update verfuegbar: $currentVersion -> $latestVersion"
 Write-Log "Aktualisiere $EnvFile …"
 
 # Zeile in .env anpassen oder hinzufügen
