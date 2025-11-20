@@ -1,7 +1,5 @@
 {
   "checkInterval": 300000,
   "updateApi": "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest",
-  "envFile": "../.env",
-  "composeFile": "../docker-compose.yml",
   "versionKey": "APP_VERSION"
 }

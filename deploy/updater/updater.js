@@ -1,76 +1,101 @@
 const fs = require("fs");
+const path = require("path");
 const axios = require("axios");
 const { execSync } = require("child_process");
 const config = require("./config.json");
 
 function log(msg) {
-    const stamp = new Date().toISOString();
-    console.log(`[${stamp}] ${msg}`);
-    fs.appendFileSync("updater.log", `[${stamp}] ${msg}\n`);
+  const stamp = new Date().toISOString();
+  const line = `[${stamp}] ${msg}`;
+  console.log(line);
+  fs.appendFileSync(path.join(__dirname, "updater.log"), line + "\n");
+}
+
+async function getLatestVersion() {
+  log("Hole GitHub Release API…");
+
+  try {
+    const res = await axios.get(config.updateApi, {
+      headers: { "User-Agent": "CustomerDashboard-Updater" },
+      timeout: 10000
+    });
+
+    let version = res.data.tag_name || "";
+    if (version.startsWith("v")) version = version.substring(1);
+
+    log("Neueste GitHub-Version: " + version);
+    return version;
+
+  } catch (err) {
+    log("FEHLER beim Abrufen der Version: " + err.message);
+    return null;
+  }
+}
+
+function readEnv() {
+  const envPath = path.resolve(__dirname, "..", ".env");
+  const raw = fs.readFileSync(envPath, "utf8");
+  const env = {};
+
+  raw.split("\n").forEach(line => {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) return;
+    const [k, ...rest] = t.split("=");
+    env[k] = rest.join("=");
+  });
+
+  return { env, envPath };
+}
+
+function writeEnv(env, envPath) {
+  const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  fs.writeFileSync(envPath, lines.join("\n") + "\n");
+}
+
+function runUpdate(version) {
+  const composeDir = path.resolve(__dirname, "..");
+
+  log("Starte Docker Update-Prozess…");
+
+  execSync("docker compose pull", { cwd: composeDir, stdio: "inherit" });
+  execSync("docker compose up -d", { cwd: composeDir, stdio: "inherit" });
+
+  log("Update erfolgreich installiert auf Version " + version);
 }
 
 async function checkForUpdates() {
-    try {
-        log("Prüfe Update-Server ...");
+  log("Überprüfe Updates…");
 
-        // Lese .env
-        const envPath = config.envFile;
-        let envContent = fs.readFileSync(envPath, "utf8");
+  const { env, envPath } = readEnv();
 
-        const versionLine = envContent
-            .split("\n")
-            .find((line) => line.startsWith(config.versionKey + "="));
+  if (!env.APP_VERSION) {
+    log("WARN: APP_VERSION nicht in .env gefunden!");
+    return;
+  }
 
-        const currentVersion = versionLine
-            ? versionLine.split("=")[1].trim()
-            : "unknown";
+  const current = env.APP_VERSION;
+  const latest = await getLatestVersion();
 
-        log("Aktuelle Version: " + currentVersion);
+  if (!latest) return;
+  if (latest === current) {
+    log("Keine neue Version verfügbar.");
+    return;
+  }
 
-        // GitHub Release abrufen
-        const response = await axios.get(config.updateApi, {
-            headers: { "User-Agent": "CustomerDashboard-Updater" }
-        });
+  log(`Update erforderlich: ${current} -> ${latest}`);
 
-        const tag = response.data.tag_name;
-        const latestVersion = tag.startsWith("v") ? tag.substring(1) : tag;
+  // ENV aktualisieren
+  env.APP_VERSION = latest;
+  writeEnv(env, envPath);
 
-        log("Neueste Version laut Server: " + latestVersion);
-
-        if (currentVersion === latestVersion) {
-            log("Kein Update notwendig.");
-            return;
-        }
-
-        log(`Update verfügbar: ${currentVersion} → ${latestVersion}`);
-        log("Aktualisiere .env ...");
-
-        // .env neu schreiben
-        const newEnv = envContent.replace(
-            new RegExp("^" + config.versionKey + "=.*", "m"),
-            config.versionKey + "=" + latestVersion
-        );
-
-        fs.writeFileSync(envPath, newEnv);
-
-        log("Starte docker compose pull ...");
-        execSync(`docker compose -f ${config.composeFile} pull`, { stdio: "inherit" });
-
-        log("Starte docker compose up -d ...");
-        execSync(`docker compose -f ${config.composeFile} up -d`, { stdio: "inherit" });
-
-        log("Update erfolgreich abgeschlossen.");
-    } catch (err) {
-        log("FEHLER: " + err.message);
-    }
+  // Docker Update
+  runUpdate(latest);
 }
 
-// Hauptloop
 (async () => {
-    log("=== Customer Dashboard Auto-Updater gestartet ===");
-
-    while (true) {
-        await checkForUpdates();
-        await new Promise((resolve) => setTimeout(resolve, config.checkInterval));
-    }
+  log("======= AUTO-UPDATER STARTED =======");
+  while (true) {
+    await checkForUpdates();
+    await new Promise(r => setTimeout(r, config.checkInterval));
+  }
 })();

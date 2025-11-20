@@ -1,10 +1,8 @@
 FROM node:20-alpine
 
 WORKDIR /app
+COPY . .
 
-COPY updater.js ./
-COPY config.json ./
-
-RUN npm install axios@1.6.0
+RUN npm install axios
 
 CMD ["node", "updater.js"]
