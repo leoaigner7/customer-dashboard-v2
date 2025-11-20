@@ -29,7 +29,8 @@ COPY app/backend .
 # # nimmt Datein aus der ersten Stage, die ich frontend-build genannt habe 
 # /app/frontend/dist: Das ist der Pfad im ersten Image, wo mein Frontend-Build gelandet ist.
 # /app/frontend/dist: Das ist der Pfad im finalen (Backend-)Image, wohin die Dateien kopiert werden.
-COPY --from=frontend-build /app/frontend/dist ./src/public
+COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
+
 #Setzt die Umgebungsvariable NODE_ENV dauerhaft im Container
 ENV NODE_ENV=production
 EXPOSE 3000
