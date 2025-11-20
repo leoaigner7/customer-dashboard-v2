@@ -1,8 +1,19 @@
 FROM node:20-alpine
 
-WORKDIR /app
-COPY . .
+# Docker + Compose + Tools installieren
+RUN apk update && apk add --no-cache \
+    docker-cli \
+    docker-cli-compose \
+    curl \
+    bash \
+    jq
 
-RUN npm install axios
+# Arbeitsverzeichnis
+WORKDIR /app
+
+# Dateien in Container kopieren
+COPY package*.json ./
+RUN npm install
+COPY . .
 
 CMD ["node", "updater.js"]
