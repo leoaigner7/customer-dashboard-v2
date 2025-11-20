@@ -57,8 +57,8 @@ function runUpdate(version) {
 
   log("Starte Docker Update-Prozess…");
 
-  execSync("docker compose pull", { cwd: composeDir, stdio: "inherit" });
-  execSync("docker compose up -d", { cwd: composeDir, stdio: "inherit" });
+  execSync("docker compose pull dashboard", { cwd: composeDir, stdio: "inherit" });
+  execSync("docker compose up -d --force-recreate --build dashboard", { cwd: composeDir, stdio: "inherit" });
 
   log("Update erfolgreich installiert auf Version " + version);
 }
