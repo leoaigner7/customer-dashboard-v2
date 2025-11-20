@@ -1,101 +1,95 @@
-const fs = require("fs");
-const path = require("path");
-const axios = require("axios");
-const { execSync } = require("child_process");
-const config = require("./config.json");
+import fs from "fs";
+import { execSync } from "child_process";
+import fetch from "node-fetch";
+
+// Pfade
+const COMPOSE_FILE = "/app/docker-compose.yml";
+const ENV_FILE = "/app/.env";
+
+// Alle 60 Sekunden prüfen
+const CHECK_INTERVAL = 60 * 1000;
 
 function log(msg) {
-  const stamp = new Date().toISOString();
-  const line = `[${stamp}] ${msg}`;
-  console.log(line);
-  fs.appendFileSync(path.join(__dirname, "updater.log"), line + "\n");
+    console.log(`[${new Date().toISOString()}] ${msg}`);
 }
 
-async function getLatestVersion() {
-  log("Hole GitHub Release API…");
-
-  try {
-    const res = await axios.get(config.updateApi, {
-      headers: { "User-Agent": "CustomerDashboard-Updater" },
-      timeout: 10000
-    });
-
-    let version = res.data.tag_name || "";
-    if (version.startsWith("v")) version = version.substring(1);
-
-    log("Neueste GitHub-Version: " + version);
-    return version;
-
-  } catch (err) {
-    log("FEHLER beim Abrufen der Version: " + err.message);
-    return null;
-  }
+// 👉 Lokale Version aus .env lesen
+function getLocalVersion() {
+    const env = fs.readFileSync(ENV_FILE, "utf8");
+    const line = env.split("\n").find(l => l.startsWith("APP_VERSION="));
+    return line?.split("=")[1].trim() || "0.0.0";
 }
 
-function readEnv() {
-  const envPath = path.resolve(__dirname, "..", ".env");
-  const raw = fs.readFileSync(envPath, "utf8");
-  const env = {};
-
-  raw.split("\n").forEach(line => {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) return;
-    const [k, ...rest] = t.split("=");
-    env[k] = rest.join("=");
-  });
-
-  return { env, envPath };
+// 👉 Remote Version holen
+async function getRemoteVersion() {
+    try {
+        const res = await fetch("https://raw.githubusercontent.com/leoaigner7/customer-dashboard-v2/main/latest.json");
+        const json = await res.json();
+        return json.version;
+    } catch (err) {
+        log("❌ Konnte Remote-Version nicht abrufen.");
+        return null;
+    }
 }
 
-function writeEnv(env, envPath) {
-  const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`);
-  fs.writeFileSync(envPath, lines.join("\n") + "\n");
+// 👉 .env aktualisieren
+function updateEnvVersion(newVersion) {
+    let env = fs.readFileSync(ENV_FILE, "utf8");
+    env = env.replace(/APP_VERSION=.*/, `APP_VERSION=${newVersion}`);
+    fs.writeFileSync(ENV_FILE, env);
+    log(`📝 APP_VERSION auf ${newVersion} aktualisiert.`);
 }
 
-function runUpdate(version) {
-  const composeDir = path.resolve(__dirname, "..");
+// 👉 Docker aktualisieren
+function performUpdate(newVersion) {
+    log("📥 Lade neues Image…");
+    execSync(`docker compose -f ${COMPOSE_FILE} pull dashboard`, { stdio: "inherit" });
 
-  log("Starte Docker Update-Prozess…");
+    log("🔄 Recreate Container…");
+    execSync(`docker compose -f ${COMPOSE_FILE} up -d --force-recreate dashboard`, { stdio: "inherit" });
 
-  execSync("docker compose pull dashboard", { cwd: composeDir, stdio: "inherit" });
-  execSync("docker compose up -d --force-recreate --build dashboard", { cwd: composeDir, stdio: "inherit" });
-
-  log("Update erfolgreich installiert auf Version " + version);
+    log(`✅ Update auf ${newVersion} abgeschlossen.`);
 }
 
+// 👉 Version numerisch vergleichen
+function isNewerVersion(remote, local) {
+    const r = remote.split(".").map(Number);
+    const l = local.split(".").map(Number);
+
+    for (let i = 0; i < 3; i++) {
+        if (r[i] > l[i]) return true;
+        if (r[i] < l[i]) return false;
+    }
+    return false;
+}
+
+// 👉 Hauptlogik
 async function checkForUpdates() {
-  log("Überprüfe Updates…");
+    log("🔍 Prüfe auf Updates…");
 
-  const { env, envPath } = readEnv();
+    const local = getLocalVersion();
+    const remote = await getRemoteVersion();
 
-  if (!env.APP_VERSION) {
-    log("WARN: APP_VERSION nicht in .env gefunden!");
-    return;
-  }
+    if (!remote) return;
 
-  const current = env.APP_VERSION;
-  const latest = await getLatestVersion();
+    log(`📌 Lokale Version:  ${local}`);
+    log(`📌 Remote Version: ${remote}`);
 
-  if (!latest) return;
-  if (latest === current) {
-    log("Keine neue Version verfügbar.");
-    return;
-  }
+    if (!isNewerVersion(remote, local)) {
+        log("👌 Keine neue Version vorhanden.");
+        return;
+    }
 
-  log(`Update erforderlich: ${current} -> ${latest}`);
+    log(`🚀 Neue Version gefunden: ${remote}`);
 
-  // ENV aktualisieren
-  env.APP_VERSION = latest;
-  writeEnv(env, envPath);
-
-  // Docker Update
-  runUpdate(latest);
+    updateEnvVersion(remote);
+    performUpdate(remote);
 }
 
+// Endlosschleife
 (async () => {
-  log("======= AUTO-UPDATER STARTED =======");
-  while (true) {
-    await checkForUpdates();
-    await new Promise(r => setTimeout(r, config.checkInterval));
-  }
+    while (true) {
+        await checkForUpdates();
+        await new Promise(r => setTimeout(r, CHECK_INTERVAL));
+    }
 })();
