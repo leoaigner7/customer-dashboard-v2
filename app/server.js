@@ -12,6 +12,10 @@ app.get("/api/version", (req, res) => {
   res.json({ version });
 });
 
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
 app.listen(port, () => {
   console.log(`Customer Dashboard läuft auf Port ${port} - Version ${version}`);
 });
