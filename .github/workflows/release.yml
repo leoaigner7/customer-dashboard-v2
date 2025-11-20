@@ -88,7 +88,7 @@ jobs:
       #Image wird mit 2 Tags versehen. Grund: versionsspezifische als auch eine "immer aktuelle" Tag-Variante.
         run: |
           docker build \
-            --noc-cache \
+            --no-cache \
             --build-arg VERSION=${VERSION} \
             -t $REGISTRY/${IMAGE_NAME}:${VERSION} \
             -t $REGISTRY/${IMAGE_NAME}:latest .
