@@ -50,7 +50,7 @@ async function run() {
     execSync(`${COMPOSE_CMD} pull`, { stdio: "inherit" });
 
     console.log("♻ Starte neuen Container…");
-    execSync(`${COMPOSE_CMD} up -d`, { stdio: "inherit" });
+    execSync(`${COMPOSE_CMD} up -d --force-recreate --pull always`, { stdio: "inherit" });
 
     console.log(`🎉 Update erfolgreich abgeschlossen: ${latest}`);
 
