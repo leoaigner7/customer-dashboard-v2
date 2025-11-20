@@ -140,7 +140,7 @@ jobs:
 
           cp deploy/docker-compose.yml package/deploy/
           cp deploy/.env.example package/deploy/.env
-          sed -i "s/^APP_VERSION=.*/APP_VERSION=${VERSION#v}/" package/deploy/.env          
+          echo "APP_VERSION=${VERSION#v}" >> package/deploy/.env       
           cp deploy/install.ps1 package/deploy/
           cp deploy/update.sh package/deploy/
           cp deploy/update.ps1 package/deploy/
