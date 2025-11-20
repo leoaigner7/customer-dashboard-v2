@@ -22,3 +22,5 @@ services:
       - ./.env:/app/../.env
       - ./docker-compose.yml:/app/../docker-compose.yml
     restart: always
+    pull_policy: always
+

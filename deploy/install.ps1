@@ -78,7 +78,7 @@ docker compose -f $ComposeFile pull
 # up -d startet den Container im Hintergrund.
 #Docker Compose liest dann: docker-compose.yml || .env  && startet alles neu
 Write-Host "Starte Container..." -ForegroundColor Yellow
-docker compose -f $ComposeFile up -d 
+docker compose -f $ComposeFile up -d --force-recreate --pull always
 
 # wenn ein fehler passiert
 if ($LASTEXITCODE -ne 0) {

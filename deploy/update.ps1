@@ -107,7 +107,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Log "Starte/aktualisiere Container …"
-docker compose -f $ComposeFile up -d
+docker compose -f $ComposeFile up -d --force-recreate --pull always
 if ($LASTEXITCODE -ne 0) {
     Write-Log "ERROR: docker compose up fehlgeschlagen (ExitCode $LASTEXITCODE)."
     exit 1

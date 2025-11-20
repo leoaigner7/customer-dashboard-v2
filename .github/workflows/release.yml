@@ -88,6 +88,7 @@ jobs:
       #Image wird mit 2 Tags versehen. Grund: versionsspezifische als auch eine "immer aktuelle" Tag-Variante.
         run: |
           docker build \
+            --noc-cache \
             --build-arg VERSION=${VERSION} \
             -t $REGISTRY/${IMAGE_NAME}:${VERSION} \
             -t $REGISTRY/${IMAGE_NAME}:latest .
@@ -139,8 +140,7 @@ jobs:
 
           cp deploy/docker-compose.yml package/deploy/
           cp deploy/.env.example package/deploy/.env
-          echo "APP_VERSION=${VERSION}" >> package/deploy/.env
-          
+          sed -i "s/^APP_VERSION=.*/APP_VERSION=${VERSION#v}/" package/deploy/.env          
           cp deploy/install.ps1 package/deploy/
           cp deploy/update.sh package/deploy/
           cp deploy/update.ps1 package/deploy/
