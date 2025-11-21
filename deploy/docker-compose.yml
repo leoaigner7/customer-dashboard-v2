@@ -25,5 +25,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./.env:/app/.env
       - ./docker-compose.yml:/app/docker-compose.yml
+      - ./updater:/app/updater          # ← DAS FEHLTE !!!
     restart: always
 
