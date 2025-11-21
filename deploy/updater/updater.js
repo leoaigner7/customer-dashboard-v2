@@ -9,26 +9,31 @@ const COMPOSE_FILE = "/app/docker-compose.yml";
 const GITHUB_LATEST =
   "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest";
 
+// Aktuelles Docker-Image
+const IMAGE_NAME = "ghcr.io/leoaigner7/customer-dashboard-v2";
+
+// Logging Funktion
 function log(...args) {
   console.log(new Date().toISOString(), "-", ...args);
 }
 
+// Holt die neueste Version von GitHub Releases
 async function getLatestVersion() {
   const res = await fetch(GITHUB_LATEST, {
     headers: { "User-Agent": "CustomerDashboard-Updater" },
   });
   const json = await res.json();
-  // z.B. tag_name = "v3.4.0" → "3.4.0"
-  return json.tag_name.replace(/^v/, "").trim();
+  return json.tag_name.replace(/^v/, "").trim();  // Entfernt 'v' aus Version
 }
 
+// Holt die aktuelle Version aus der .env
 function getCurrentVersion() {
   const env = fs.readFileSync(ENV_PATH, "utf8");
   const line = env.split("\n").find(l => l.startsWith("APP_VERSION"));
-  if (!line) return "unknown";
-  return line.split("=")[1].trim();
+  return line ? line.split("=")[1].trim() : "unknown";
 }
 
+// Aktualisiert die .env Datei mit der neuen Version
 function writeNewEnv(version) {
   let env = fs.readFileSync(ENV_PATH, "utf8");
   if (env.match(/APP_VERSION=.*/)) {
@@ -39,6 +44,27 @@ function writeNewEnv(version) {
   fs.writeFileSync(ENV_PATH, env);
 }
 
+// Alte Container stoppen und entfernen
+function removeOldContainer(containerName) {
+  try {
+    log(`Stoppe und entferne alten Container: ${containerName}`);
+    execSync(`docker stop ${containerName}`, { stdio: "inherit" });
+    execSync(`docker rm ${containerName}`, { stdio: "inherit" });
+  } catch (err) {
+    log(`Kein alter Container gefunden oder Fehler beim Entfernen: ${err.message}`);
+  }
+}
+
+// Docker-Image ziehen und neuen Container starten
+function deployNewVersion(version) {
+  log(`Ziehe neues Docker-Image für Version: ${version}`);
+  execSync(`docker compose -f ${COMPOSE_FILE} pull dashboard`, { stdio: "inherit" });
+
+  log(`Starte den neuen Container mit Version: ${version}`);
+  execSync(`docker compose -f ${COMPOSE_FILE} up -d --force-recreate dashboard`, { stdio: "inherit" });
+}
+
+// Hauptlogik
 async function runOnce() {
   try {
     const current = getCurrentVersion();
@@ -54,21 +80,14 @@ async function runOnce() {
 
     log("🚀 Update verfügbar →", `${current} → ${latest}`);
 
-    // Version in .env überschreiben
+    // Neue Version in der .env setzen
     writeNewEnv(latest);
 
-    // Nur den dashboard-Service pullen, NICHT den updater!
-    log("📦 Pulle neues Dashboard-Image…");
-    execSync(`docker compose -f ${COMPOSE_FILE} pull dashboard`, {
-      stdio: "inherit",
-    });
+    // Alten Container stoppen und entfernen
+    removeOldContainer('deploy-dashboard-1');
 
-    // Nur dashboard neu starten
-    log("♻ Starte Dashboard neu…");
-    execSync(
-      `docker compose -f ${COMPOSE_FILE} up -d --force-recreate dashboard`,
-      { stdio: "inherit" }
-    );
+    // Neuer Container wird mit der neuen Version gestartet
+    deployNewVersion(latest);
 
     log(`🎉 Update erfolgreich abgeschlossen: ${latest}`);
   } catch (err) {
@@ -76,8 +95,9 @@ async function runOnce() {
   }
 }
 
+// Initialer Update-Check
 log("=== Customer Dashboard Auto-Updater gestartet ===");
 runOnce();
 
-// alle 5 Minuten prüfen (kannst du anpassen)
-setInterval(runOnce, 2 * 60 * 1000);
+// Alle 5 Minuten prüfen (optional anpassen)
+setInterval(runOnce, 1 * 60 * 1000);
