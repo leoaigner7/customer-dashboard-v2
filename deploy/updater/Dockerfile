@@ -9,4 +9,6 @@ RUN npm install
 
 COPY updater.js ./
 
+ENTRYPOINT []
+
 CMD ["node", "updater.js"]
