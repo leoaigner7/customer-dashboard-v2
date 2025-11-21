@@ -60,3 +60,4 @@ async function run() {
 }
 
 run();
+setInterval(run, 1000 * 60 * 2);

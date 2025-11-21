@@ -69,6 +69,30 @@ try {
     Write-Host "keine bestehenden Container gefunden"
 }
 # --- 3. Neues Image ziehen & starten ----------------------------------
+# --- GitHub Release Version abrufen -------------------------------------------------
+Write-Host "Hole neueste Version aus GitHub Releases..." -ForegroundColor Yellow
+
+$repoOwner = "leoaigner7"
+$repoName  = "customer-dashboard-v2"
+$apiUrl    = "https://api.github.com/repos/$repoOwner/$repoName/releases/latest"
+
+try {
+    $headers = @{ "User-Agent" = "CustomerDashboard-Installer" }
+    $response = Invoke-WebRequest -Uri $apiUrl -Headers $headers -UseBasicParsing
+    $json = $response.Content | ConvertFrom-Json
+    $latestVersion = $json.tag_name.TrimStart("v")
+    Write-Host "Neueste verfügbare Version: $latestVersion" -ForegroundColor Green
+}
+catch {
+    Write-Host "ERROR: Konnte GitHub-Latest-Version nicht abrufen." -ForegroundColor Red
+    exit 1
+}
+
+# APP_VERSION in .env ersetzen
+Write-Host "Schreibe neue Version in .env ..." -ForegroundColor Yellow
+(Get-Content ".\.env") `
+    -replace "^APP_VERSION=.*", "APP_VERSION=$latestVersion" |
+    Set-Content ".\.env"
 
 # holt das Image bspw: ghcr.io/leoaigner7/customer-dashboard-v2:<APP_VERSION> lädt es frisch herunter 
 
