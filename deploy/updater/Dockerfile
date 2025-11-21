@@ -1,19 +1,12 @@
-FROM node:20-alpine
+# Docker CLI + Node
+FROM docker:24-cli
 
-# Docker + Compose + Tools installieren
-RUN apk update && apk add --no-cache \
-    docker-cli \
-    docker-cli-compose \
-    curl \
-    bash \
-    jq
+# Node installieren
+RUN apk add --no-cache nodejs npm
 
-# Arbeitsverzeichnis
 WORKDIR /app
+COPY updater.js package*.json ./
 
-# Dateien in Container kopieren
-COPY package*.json ./
 RUN npm install
-COPY . .
 
 CMD ["node", "updater.js"]

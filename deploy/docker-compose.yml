@@ -10,6 +10,7 @@ services:
     #${APP_PORT:-8080} = wenn APP_PORT nicht definiert ist, nimm 8080 als Fallback
       - "${APP_PORT:-8080}:3000"
       #    Docker versucht, den Container immer automatisch wieder zu starten, außer du stoppst ihn explizit
+    restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 15s
@@ -19,8 +20,8 @@ services:
     container_name: dashboard-updater
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./.env:/app/../.env
-      - ./docker-compose.yml:/app/../docker-compose.yml
+      - ./.env:/app/.env
+      - ./docker-compose.yml:/app/docker-compose.yml
     restart: always
     pull_policy: always
 
