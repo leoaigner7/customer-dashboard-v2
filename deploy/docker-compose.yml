@@ -15,7 +15,10 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 15s
       retries: 3
+
   updater:
+    build:
+      context: ./updater
     image: deploy-updater:latest
     container_name: dashboard-updater
     volumes:
@@ -23,5 +26,4 @@ services:
       - ./.env:/app/.env
       - ./docker-compose.yml:/app/docker-compose.yml
     restart: always
-    pull_policy: always
 
