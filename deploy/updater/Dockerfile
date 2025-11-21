@@ -1,12 +1,12 @@
-# Docker CLI + Node
 FROM docker:24-cli
 
-# Node installieren
-RUN apk add --no-cache nodejs npm
+RUN apk add --no-cache nodejs npm curl
 
 WORKDIR /app
-COPY updater.js package*.json ./
 
+COPY package*.json ./
 RUN npm install
+
+COPY updater.js ./
 
 CMD ["node", "updater.js"]

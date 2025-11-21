@@ -1,0 +1,10 @@
+{
+  "name": "dashboard-updater",
+  "version": "1.0.0",
+  "description": "Auto updater for customer dashboard",
+  "main": "updater.js",
+  "type": "module",
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
