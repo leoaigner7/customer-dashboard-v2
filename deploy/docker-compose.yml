@@ -19,7 +19,7 @@ services:
   updater:
     build:
       context: .
-      dockerfile: ./updater/Dockerfile
+      dockerfile: ./deploy/updater/Dockerfile
     working_dir: /app
     image: deploy-updater:latest
     container_name: dashboard-updater
