@@ -140,6 +140,9 @@ jobs:
           cp deploy/install.ps1 package/deploy/
           cp deploy/update.sh package/deploy/
           cp deploy/update.ps1 package/deploy/
+          cp deploy/register-autoupdate.ps1 package/deploy/
+          cp deploy/unregister-autoupdate.ps1 package/deploy/
+
 
           cp README.md package/
           echo "${VERSION}" > package/VERSION.txt
