@@ -59,10 +59,10 @@ function stopAllDashboardContainers() {
 // Docker-Image ziehen und neuen Container starten
 function deployNewVersion(version) {
   console.log(`Ziehe neues Docker-Image für Version: ${version}`);
-  execSync(`docker compose --project-directory /app -f ${COMPOSE_FILE} pull dashboard`, { stdio: "inherit" });
+ execSync(`docker compose --project-directory /app -f ${COMPOSE_FILE} pull dashboard`);
 
   console.log(`Starte den neuen Container mit Version: ${version}`);
-  execSync(`docker compose --project-directory /app -f ${COMPOSE_FILE} pull dashboard`, { stdio: "inherit" });
+execSync(`docker compose --project-directory /app -f ${COMPOSE_FILE} up -d --force-recreate dashboard`);
 }
 
 // Hauptlogik
