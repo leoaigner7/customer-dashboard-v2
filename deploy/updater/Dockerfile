@@ -9,6 +9,7 @@ WORKDIR /app
 
 # Kopiere deine Dateien ins Docker-Image
 COPY updater.js package*.json ./
+COPY ../docker-compose.yml /app/docker-compose.yml
 
 # Installiere Node.js Abhängigkeiten
 RUN npm install
