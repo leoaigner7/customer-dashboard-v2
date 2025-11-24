@@ -75,7 +75,7 @@ docker compose -f $ComposeFile pull dashboard
 
 # — Dashboard starten —
 Write-Host "Starte Container..." -ForegroundColor Yellow
-docker compose -f $ComposeFile up -d --force-recreate dashboard
+docker compose -f $ComposeFile up -d --force-recreate 
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: docker compose up -d ist fehlgeschlagen." -ForegroundColor Red

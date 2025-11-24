@@ -51,7 +51,7 @@ function removeOldContainer(containerName) {
 // Docker-Image ziehen und neuen Container starten
 function deployNewVersion(version) {
   console.log(`Ziehe neues Docker-Image für Version: ${version}`);
-  execSync(`docker compose -f ${COMPOSE_FILE} pull dashboard`, { stdio: "inherit" });
+  execSync(`docker compose -f ${COMPOSE_FILE} pull --quiet dashboard`, { stdio: "inherit" });
 
   console.log(`Starte den neuen Container mit Version: ${version}`);
   execSync(`docker compose -f ${COMPOSE_FILE} up -d --force-recreate dashboard`, { stdio: "inherit" });
