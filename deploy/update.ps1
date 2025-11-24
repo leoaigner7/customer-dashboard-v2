@@ -17,6 +17,7 @@ $VersionKey  = "APP_VERSION"
 $LogFile     = "updater.log"
 # ===============================================
 
+# Skriptverzeichnis als Working Directory
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $scriptDir
 
@@ -41,23 +42,24 @@ if (-not (Test-Path $ComposeFile)) {
 }
 
 # Aktuelle Version aus .env lesen
-$envLines = Get-Content $EnvFile
-$currentLine = $envLines | Where-Object { $_ -match "^$VersionKey=" }
+$envLines    = Get-Content -Path $EnvFile -Encoding UTF8
+$currentLine = $envLines | Where-Object { $_ -match "^\s*$VersionKey\s*=" }
 
 if (-not $currentLine) {
     Write-Log "WARN: Keine Zeile mit $VersionKey= gefunden – setze 'unknown'."
     $currentVersion = "unknown"
 } else {
-    $currentVersion = $currentLine -replace "^$VersionKey=", ""
+    $currentVersion = $currentLine -replace "^\s*$VersionKey\s*=", ""
+    $currentVersion = $currentVersion.Trim()
 }
 
 Write-Log "Aktuelle Version: $currentVersion"
 
 # Neueste Version vom Update-Server (GitHub Releases)
 try {
-    $headers = @{ "User-Agent" = "CustomerDashboard-Updater" }
+    $headers  = @{ "User-Agent" = "CustomerDashboard-Updater" }
     $response = Invoke-WebRequest -Uri $UpdateApiUrl -Headers $headers -UseBasicParsing
-    $json = $response.Content | ConvertFrom-Json
+    $json     = $response.Content | ConvertFrom-Json
 } catch {
     Write-Log "ERROR: Fehler beim Abrufen der Release-Infos: $($_.Exception.Message)"
     exit 1
@@ -72,19 +74,41 @@ if (-not $latestTag) {
 $latestVersion = $latestTag.TrimStart("v")
 Write-Log "Neueste Version laut Server: $latestVersion (Tag: $latestTag)"
 
-if ($latestVersion -eq $currentVersion) {
+# Optional: echte Version-Objekte zum Vergleichen verwenden
+$shouldUpdate = $true
+if ($currentVersion -ne "unknown") {
+    try {
+        $currV   = [Version]$currentVersion
+        $latestV = [Version]$latestVersion
+
+        if ($latestV -le $currV) {
+            Write-Log "Keine neuere Version verfügbar ($currentVersion ≥ $latestVersion)."
+            $shouldUpdate = $false
+        }
+    } catch {
+        Write-Log "WARN: Konnte Versionen nicht als [Version] parsen, fallback auf einfachen String-Vergleich."
+        if ($latestVersion -eq $currentVersion) {
+            $shouldUpdate = $false
+        }
+    }
+} else {
+    # unknown -> sicherheitshalber updaten
+    $shouldUpdate = $true
+}
+
+if (-not $shouldUpdate) {
     Write-Log "Kein Update notwendig."
     exit 0
 }
 
-Write-Log "Update verfuegbar: $currentVersion -> $latestVersion"
+Write-Log "Update verfügbar: $currentVersion -> $latestVersion"
 Write-Log "Aktualisiere $EnvFile …"
 
 # Zeile in .env anpassen oder hinzufügen
 $newEnvLines = @()
 $replaced = $false
 foreach ($line in $envLines) {
-    if ($line -match "^$VersionKey=") {
+    if ($line -match "^\s*$VersionKey\s*=") {
         $newEnvLines += "$VersionKey=$latestVersion"
         $replaced = $true
     } else {
@@ -114,3 +138,4 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Log "Update auf Version $latestVersion erfolgreich abgeschlossen."
+exit 0
