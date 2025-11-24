@@ -37,14 +37,22 @@ function writeNewEnv(version) {
   fs.writeFileSync(ENV_PATH, env);
 }
 
-// Alte Container stoppen und entfernen
-function removeOldContainer(containerName) {
+// Stoppt und entfernt alle Dashboard-Container
+function stopAllDashboardContainers() {
   try {
-    console.log(`Stoppe und entferne alten Container: ${containerName}`);
-    execSync(`docker stop ${containerName}`, { stdio: "inherit" });
-    execSync(`docker rm ${containerName}`, { stdio: "inherit" });
-  } catch (err) {
-    console.log(`Kein alter Container gefunden oder Fehler beim Entfernen: ${err.message}`);
+    const names = execSync(
+      "docker ps --filter 'name=dashboard' --format '{{.Names}}'"
+    ).toString().trim().split("\n");
+
+    for (const name of names) {
+      if (!name) continue;
+      if (name.includes("updater")) continue; // Updater nicht stoppen
+      console.log("Stoppe Dashboard Container:", name);
+      execSync(`docker stop ${name}`, { stdio: "inherit" });
+      execSync(`docker rm ${name}`, { stdio: "inherit" });
+    }
+  } catch (e) {
+    console.log("Keine alten Dashboard Container gefunden.");
   }
 }
 
@@ -77,7 +85,7 @@ async function runOnce() {
     writeNewEnv(latest);
 
     // Alten Container stoppen und entfernen
-    removeOldContainer('deploy-dashboard-1');
+    stopAllDashboardContainers();
 
     // Neuer Container wird mit der neuen Version gestartet
     deployNewVersion(latest);
@@ -92,5 +100,5 @@ async function runOnce() {
 console.log("=== Customer Dashboard Auto-Updater gestartet ===");
 runOnce();
 
-// Alle 5 Minuten prüfen (optional anpassen)
+// Alle 1 Minuten prüfen
 setInterval(runOnce, 1 * 60 * 1000);
