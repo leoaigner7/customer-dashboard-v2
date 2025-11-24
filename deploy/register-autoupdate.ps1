@@ -1,6 +1,6 @@
 Param(
     [string]$TaskName  = "CustomerDashboardAutoUpdate",
-    [string]$DailyTime = "14:26"  # Uhrzeit HH:mm (24h-Format)
+    [string]$DailyTime = "14:32"  # Uhrzeit HH:mm (24h-Format)
 )
 
 # Skriptverzeichnis
