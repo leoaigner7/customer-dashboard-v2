@@ -19,11 +19,12 @@ services:
   updater:
     build:
       context: ./updater
+    working_dir: /app
     image: deploy-updater:latest
     container_name: dashboard-updater
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./.env:/app/.env
-      - ${PWD}/docker-compose.yml:/app/docker-compose.yml
+      - ./docker-compose.yml:/app/docker-compose.yml
     restart: always
 
