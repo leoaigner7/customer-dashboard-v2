@@ -12,7 +12,7 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <h1>Dashboard 3.6.2</h1>
+      <h1>Dashboard 3.6.4</h1>
       <div className="cards">
         {data.cards.map(card => (
           <div key={card.id} className="card">
