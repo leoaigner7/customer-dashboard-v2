@@ -50,10 +50,10 @@ async function checkForUpdates() {
 
     // Docker Update ausführen
     log("Führe docker compose pull aus …");
-    execSync(`docker compose -f ${config.composeFile} pull`, { stdio: "inherit" });
+    execSync(`docker-compose -f ${config.composeFile} pull`, { stdio: "inherit" });
 
     log("Führe docker compose up -d aus …");
-    execSync(`docker compose -f ${config.composeFile} up -d`, { stdio: "inherit" });
+    execSync(`docker-compose -f ${config.composeFile} up -d`, { stdio: "inherit" });
 
     log("Update erfolgreich abgeschlossen.");
 }
