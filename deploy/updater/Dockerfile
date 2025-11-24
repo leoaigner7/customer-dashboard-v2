@@ -1,4 +1,4 @@
-FROM docker:24-cli
+FROM docker:27.0.0-cli
 
 RUN apk add --no-cache nodejs npm
 

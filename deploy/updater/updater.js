@@ -1,6 +1,5 @@
 const fs = require("fs");
 const axios = require("axios");
-const path = require("path");
 const { execSync } = require("child_process");
 const config = require("./config.json");
 
@@ -10,62 +9,58 @@ function log(msg) {
     fs.appendFileSync("/app/updater.log", `[${stamp}] ${msg}\n`);
 }
 
-function readEnvVersion(envPath, key) {
-    const env = fs.readFileSync(envPath, "utf8").split("\n");
-    const line = env.find(l => l.startsWith(key + "="));
-    if (!line) return null;
-    return line.split("=")[1].trim();
+function readEnvVersion(path, key) {
+    const content = fs.readFileSync(path, "utf8");
+    const line = content.split("\n").find(l => l.startsWith(key + "="));
+    return line ? line.split("=")[1].trim() : null;
 }
 
-function writeEnvVersion(envPath, key, version) {
-    const lines = fs.readFileSync(envPath, "utf8").split("\n");
-    const out = lines.map(l => l.startsWith(key + "=") ? `${key}=${version}` : l);
-    fs.writeFileSync(envPath, out.join("\n"));
+function writeEnvVersion(path, key, version) {
+    let content = fs.readFileSync(path, "utf8").split("\n");
+    content = content.map(l => l.startsWith(key + "=") ? `${key}=${version}` : l);
+    fs.writeFileSync(path, content.join("\n"));
 }
 
 async function checkForUpdates() {
-    log("Prüfe GitHub Releases ...");
+    try {
+        log("Prüfe GitHub Releases ...");
 
-    // API
-    const res = await axios.get(config.updateApi, {
-        headers: { "User-Agent": "auto-updater" }
-    });
-    const latestTag = res.data.tag_name;
-    const latest = latestTag.replace(/^v/, "");
+        const res = await axios.get(config.updateApi, {
+            headers: { "User-Agent": "dashboard-updater" }
+        });
 
-    const envVersion = readEnvVersion(config.envFile, config.versionKey);
-    log(`Aktuelle Version: ${envVersion}`);
-    log(`Neueste Version: ${latest}`);
+        const latest = res.data.tag_name.replace("v", "");
+        const current = readEnvVersion(config.envFile, config.versionKey);
 
-    if (envVersion === latest) {
-        log("Keine neue Version gefunden.");
-        return;
+        log(`Aktuelle Version: ${current}`);
+        log(`Neueste Version: ${latest}`);
+
+        if (!current || current === latest) {
+            log("Keine neue Version vorhanden.");
+            return;
+        }
+
+        log(`⚡ Update erkannt: ${current} → ${latest}`);
+
+        writeEnvVersion(config.envFile, config.versionKey, latest);
+        log("ENV aktualisiert.");
+
+        log("docker compose pull …");
+        execSync(`docker compose -f ${config.composeFile} pull`, { stdio: "inherit" });
+
+        log("docker compose up -d …");
+        execSync(`docker compose -f ${config.composeFile} up -d`, { stdio: "inherit" });
+
+        log("Update erfolgreich abgeschlossen.");
+    } catch (err) {
+        log("❌ Fehler: " + err.toString());
     }
-
-    log(`UPDATE VERFÜGBAR: ${envVersion} -> ${latest}`);
-
-    // Update .env
-    writeEnvVersion(config.envFile, config.versionKey, latest);
-    log("ENV-Version aktualisiert!");
-
-    // Docker Update ausführen
-    log("Führe docker compose pull aus …");
-    execSync(`docker-compose -f ${config.composeFile} pull`, { stdio: "inherit" });
-
-    log("Führe docker compose up -d aus …");
-    execSync(`docker-compose -f ${config.composeFile} up -d`, { stdio: "inherit" });
-
-    log("Update erfolgreich abgeschlossen.");
 }
 
 (async () => {
     log("Auto-Updater gestartet.");
     while (true) {
-        try {
-            await checkForUpdates();
-        } catch (err) {
-            log("Fehler: " + err.message);
-        }
+        await checkForUpdates();
         await new Promise(r => setTimeout(r, config.checkInterval));
     }
 })();
