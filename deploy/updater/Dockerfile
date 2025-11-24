@@ -1,10 +1,10 @@
-FROM node:20-alpine
+FROM docker:24-cli
+
+RUN apk add --no-cache nodejs npm
 
 WORKDIR /app
 
-COPY updater.js ./
-COPY config.json ./
-
-RUN npm install axios@1.6.0
+COPY updater.js .
+COPY config.json .
 
 CMD ["node", "updater.js"]

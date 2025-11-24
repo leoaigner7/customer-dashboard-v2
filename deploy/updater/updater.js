@@ -1,76 +1,71 @@
 const fs = require("fs");
 const axios = require("axios");
+const path = require("path");
 const { execSync } = require("child_process");
 const config = require("./config.json");
 
 function log(msg) {
     const stamp = new Date().toISOString();
     console.log(`[${stamp}] ${msg}`);
-    fs.appendFileSync("updater.log", `[${stamp}] ${msg}\n`);
+    fs.appendFileSync("/app/updater.log", `[${stamp}] ${msg}\n`);
+}
+
+function readEnvVersion(envPath, key) {
+    const env = fs.readFileSync(envPath, "utf8").split("\n");
+    const line = env.find(l => l.startsWith(key + "="));
+    if (!line) return null;
+    return line.split("=")[1].trim();
+}
+
+function writeEnvVersion(envPath, key, version) {
+    const lines = fs.readFileSync(envPath, "utf8").split("\n");
+    const out = lines.map(l => l.startsWith(key + "=") ? `${key}=${version}` : l);
+    fs.writeFileSync(envPath, out.join("\n"));
 }
 
 async function checkForUpdates() {
-    try {
-        log("Prüfe Update-Server ...");
+    log("Prüfe GitHub Releases ...");
 
-        // Lese .env
-        const envPath = config.envFile;
-        let envContent = fs.readFileSync(envPath, "utf8");
+    // API
+    const res = await axios.get(config.updateApi, {
+        headers: { "User-Agent": "auto-updater" }
+    });
+    const latestTag = res.data.tag_name;
+    const latest = latestTag.replace(/^v/, "");
 
-        const versionLine = envContent
-            .split("\n")
-            .find((line) => line.startsWith(config.versionKey + "="));
+    const envVersion = readEnvVersion(config.envFile, config.versionKey);
+    log(`Aktuelle Version: ${envVersion}`);
+    log(`Neueste Version: ${latest}`);
 
-        const currentVersion = versionLine
-            ? versionLine.split("=")[1].trim()
-            : "unknown";
-
-        log("Aktuelle Version: " + currentVersion);
-
-        // GitHub Release abrufen
-        const response = await axios.get(config.updateApi, {
-            headers: { "User-Agent": "CustomerDashboard-Updater" }
-        });
-
-        const tag = response.data.tag_name;
-        const latestVersion = tag.startsWith("v") ? tag.substring(1) : tag;
-
-        log("Neueste Version laut Server: " + latestVersion);
-
-        if (currentVersion === latestVersion) {
-            log("Kein Update notwendig.");
-            return;
-        }
-
-        log(`Update verfügbar: ${currentVersion} → ${latestVersion}`);
-        log("Aktualisiere .env ...");
-
-        // .env neu schreiben
-        const newEnv = envContent.replace(
-            new RegExp("^" + config.versionKey + "=.*", "m"),
-            config.versionKey + "=" + latestVersion
-        );
-
-        fs.writeFileSync(envPath, newEnv);
-
-        log("Starte docker compose pull ...");
-        execSync(`docker compose -f ${config.composeFile} pull`, { stdio: "inherit" });
-
-        log("Starte docker compose up -d ...");
-        execSync(`docker compose -f ${config.composeFile} up -d`, { stdio: "inherit" });
-
-        log("Update erfolgreich abgeschlossen.");
-    } catch (err) {
-        log("FEHLER: " + err.message);
+    if (envVersion === latest) {
+        log("Keine neue Version gefunden.");
+        return;
     }
+
+    log(`UPDATE VERFÜGBAR: ${envVersion} -> ${latest}`);
+
+    // Update .env
+    writeEnvVersion(config.envFile, config.versionKey, latest);
+    log("ENV-Version aktualisiert!");
+
+    // Docker Update ausführen
+    log("Führe docker compose pull aus …");
+    execSync(`docker compose -f ${config.composeFile} pull`, { stdio: "inherit" });
+
+    log("Führe docker compose up -d aus …");
+    execSync(`docker compose -f ${config.composeFile} up -d`, { stdio: "inherit" });
+
+    log("Update erfolgreich abgeschlossen.");
 }
 
-// Hauptloop
 (async () => {
-    log("=== Customer Dashboard Auto-Updater gestartet ===");
-
+    log("Auto-Updater gestartet.");
     while (true) {
-        await checkForUpdates();
-        await new Promise((resolve) => setTimeout(resolve, config.checkInterval));
+        try {
+            await checkForUpdates();
+        } catch (err) {
+            log("Fehler: " + err.message);
+        }
+        await new Promise(r => setTimeout(r, config.checkInterval));
     }
 })();
