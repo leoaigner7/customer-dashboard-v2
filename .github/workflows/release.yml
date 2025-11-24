@@ -91,7 +91,9 @@ jobs:
             --no-cache \
             --build-arg VERSION=${VERSION} \
             -t $REGISTRY/${IMAGE_NAME}:${VERSION} \
-            -t $REGISTRY/${IMAGE_NAME}:latest .
+            -t $REGISTRY/${IMAGE_NAME}:latest \
+            -f Dockerfile .
+
 
         # startet das frisch gebaute Container Image und prüft, ob es HTTP-Anfragen erfolgreich beantworten kann
 
