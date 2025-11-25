@@ -14,11 +14,4 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 15s
       retries: 3
-  updater:
-    container_name: dashboard-updater
-    volumes:
-      - ./.env:/app/env/.env
-      - ./docker-compose.yml:/app/env/docker-compose.yml
-      - ./updater:/app/updater
-      - /var/run/docker.sock:/var/run/docker.sock
-    restart: always
+ 
