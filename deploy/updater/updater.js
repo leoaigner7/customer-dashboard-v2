@@ -42,17 +42,20 @@ async function checkForUpdates() {
 
         log(`⚡ Update erkannt: ${current} → ${latest}`);
 
-        // Update ENV
         writeEnvVersion(config.envFile, config.versionKey, latest);
         log("ENV aktualisiert.");
 
-        // Pull ONLY dashboard service
+        // Nur dashboard aktualisieren – niemals updater stoppen
         log("docker compose pull dashboard …");
-        execSync(`docker compose -f ${config.composeFile} pull dashboard`, { stdio: "inherit" });
+        execSync(`docker compose -f ${config.composeFile} pull dashboard`, {
+            stdio: "inherit"
+        });
 
-        // Recreate ONLY dashboard container
         log("docker compose up -d --force-recreate dashboard …");
-        execSync(`docker compose -f ${config.composeFile} up -d --force-recreate dashboard`, { stdio: "inherit" });
+        execSync(
+            `docker compose -f ${config.composeFile} up -d --force-recreate dashboard`,
+            { stdio: "inherit" }
+        );
 
         log("Update erfolgreich abgeschlossen.");
     } catch (err) {
