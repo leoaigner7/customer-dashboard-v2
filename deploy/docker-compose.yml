@@ -18,7 +18,8 @@ services:
     build: ./updater
     container_name: dashboard-updater
     volumes:
-      - ./updater:/app
-      - ./:/app/env
+      - ./.env:/app/env/.env
+      - ./docker-compose.yml:/app/env/docker-compose.yml
+      - ./updater:/app/updater
       - /var/run/docker.sock:/var/run/docker.sock
     restart: always
