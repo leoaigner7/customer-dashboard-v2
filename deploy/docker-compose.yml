@@ -13,6 +13,7 @@ services:
 
   updater:
     container_name: dashboard-updater
+    build: ./updater
     volumes:
       - ./.env:/app/env/.env
       - ./docker-compose.yml:/app/env/docker-compose.yml
