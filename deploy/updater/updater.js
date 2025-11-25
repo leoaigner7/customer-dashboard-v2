@@ -45,6 +45,13 @@ async function checkForUpdates() {
         writeEnvVersion(config.envFile, config.versionKey, latest);
         log("ENV aktualisiert.");
 
+        //
+        // 🛑 WICHTIG: Erst down, dann pull, dann up
+        //
+
+        log("docker compose down …");
+        execSync(`docker compose -f ${config.composeFile} down`, { stdio: "inherit" });
+
         log("docker compose pull …");
         execSync(`docker compose -f ${config.composeFile} pull`, { stdio: "inherit" });
 
