@@ -31,7 +31,7 @@ jobs:
       # --- Frontend build ------------------------------------------------
       - name: Install frontend deps
         working-directory: app/frontend
-        run: npm ci
+        run: npm install
 
       - name: Build frontend
         working-directory: app/frontend
@@ -40,7 +40,7 @@ jobs:
       # --- Backend deps (Tests optional) ---------------------------------
       - name: Install backend deps
         working-directory: app/backend
-        run: npm ci
+        run: npm install
 
       # Hier könntest du noch Tests einhängen (npm test etc.)
 
