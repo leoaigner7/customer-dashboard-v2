@@ -22,8 +22,9 @@ If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 # 1. Verzeichnisse bestimmen
 # -------------------------------------------------------------
 
-$deployDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
-$packageRoot = Split-Path -Parent $deployDir
+$deployDir   = $PSScriptRoot
+$packageRoot = Split-Path -Parent $PSScriptRoot
+
 
 $InstallDir   = "C:\CustomerDashboard"
 $TargetDeploy = "$InstallDir\deploy"
