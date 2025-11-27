@@ -13,8 +13,8 @@ Write-Host "=== Customer Dashboard Installer (Windows) ===`n" -ForegroundColor C
 If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(`
     [Security.Principal.WindowsBuiltInRole] "Administrator"))
 {
-    Write-Host "Dieses Skript muss als ADMINISTRATOR ausgeführt werden!" -ForegroundColor Red
-    Write-Host "Rechtsklick auf PowerShell → 'Als Administrator ausführen'" -ForegroundColor Yellow
+    Write-Host "Dieses Skript muss als ADMINISTRATOR ausgefuehrt werden!" -ForegroundColor Red
+    Write-Host "Rechtsklick auf PowerShell 'Als Administrator ausführen'" -ForegroundColor Yellow
     exit 1
 }
 
@@ -87,10 +87,24 @@ Copy-WithRetry "$daemonSource\*" $TargetDaemon
 # -------------------------------------------------------------
 $envPath = "$TargetDeploy\.env"
 
-if (-not (Test-Path $envPath)) {
-    Write-Host ".env Datei fehlt im deploy Ordner!" -ForegroundColor Red
+$maxWait = 20
+$envFound = $false
+
+for ($i = 1; $i -le $maxWait; $i++) {
+    if (Test-Path $envPath) {
+        $envFound = $true
+        break
+    }
+    Start-Sleep -Milliseconds 200
+}
+
+if (-not $envFound) {
+    Write-Host "ERROR: .env is not visible in C:\CustomerDashboard\deploy."
+    Write-Host "Files are copied correctly, but filesystem has not released the handle."
+    Write-Host "Stopping installation for safety."
     exit 1
 }
+
 
 $envLines = Get-Content $envPath
 $version  = ($envLines | Where-Object { $_ -match '^APP_VERSION=' }) -replace 'APP_VERSION=',''
@@ -121,7 +135,7 @@ docker compose -f "$composeFilePath" down | Out-Null
 # -------------------------------------------------------------
 # 7. Docker starten
 # -------------------------------------------------------------
-Write-Host "⬇️  Lade aktuelles Image..."
+Write-Host "⬇Lade aktuelles Image..."
 docker compose -f "$composeFilePath" pull
 
 Write-Host "Starte Dashboard..."
@@ -133,7 +147,7 @@ Start-Sleep 10
 # -------------------------------------------------------------
 # 8. HTTP-Test
 # -------------------------------------------------------------
-Write-Host "rüfe Dashboard..."
+Write-Host "pruefe Dashboard..."
 
 $uri = "http://localhost:$port/"
 
