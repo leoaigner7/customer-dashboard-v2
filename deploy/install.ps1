@@ -1,29 +1,27 @@
 # Customer Dashboard Installer for Windows
-# CLEAN ASCII VERSION
+# VERSION 4.1.3 FINAL CLEAN
 
 Param(
     [string]$ComposeFile = "docker-compose.yml"
 )
 
-Write-Host "=== Customer Dashboard Installer (Windows) ==="
-Write-Host ""
+Write-Host "=== Customer Dashboard Installer (Windows) ===`n" -ForegroundColor Cyan
 
 # -------------------------------------------------------------
 # 0. ADMIN CHECK
 # -------------------------------------------------------------
-$IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole] "Administrator"
-)
-
-if (-not $IsAdmin) {
-    Write-Host "ERROR: This script must be executed as Administrator."
-    Write-Host "Right-click on PowerShell and select 'Run as Administrator'."
+If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(`
+    [Security.Principal.WindowsBuiltInRole] "Administrator"))
+{
+    Write-Host "Dieses Skript muss als ADMINISTRATOR ausgeführt werden!" -ForegroundColor Red
+    Write-Host "Rechtsklick auf PowerShell → 'Als Administrator ausführen'" -ForegroundColor Yellow
     exit 1
 }
 
 # -------------------------------------------------------------
-# 1. Determine Directories
+# 1. Verzeichnisse bestimmen
 # -------------------------------------------------------------
+
 $deployDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $packageRoot = Split-Path -Parent $deployDir
 
@@ -33,26 +31,27 @@ $TargetDaemon = "$InstallDir\system-daemon"
 $LogDir       = "$InstallDir\logs"
 $TaskName     = "CustomerDashboardAutoUpdater"
 
-Write-Host "Installer directory:    $deployDir"
-Write-Host "Package root directory: $packageRoot"
-Write-Host ""
+Write-Host "Installer liegt in:      $deployDir"
+Write-Host "Paketwurzelverzeichnis: $packageRoot`n"
+
 
 # -------------------------------------------------------------
-# 2. Create Target Directories
+# 2. Installationsverzeichnisse
 # -------------------------------------------------------------
-Write-Host "Creating installation directories..."
+Write-Host "Erstelle Installationsverzeichnisse..."
 New-Item -ItemType Directory -Force -Path $InstallDir    | Out-Null
 New-Item -ItemType Directory -Force -Path $TargetDeploy  | Out-Null
 New-Item -ItemType Directory -Force -Path $TargetDaemon  | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir        | Out-Null
 
+
 # -------------------------------------------------------------
-# 3. Robust Copy Function (Retry)
+# 3. Robuster Kopiervorgang (mit Retry)
 # -------------------------------------------------------------
 function Copy-WithRetry($source, $target) {
     $success = $false
 
-    for ($i = 1; $i -le 5; $i++) {
+    for ($i=1; $i -le 5; $i++) {
         try {
             Copy-Item -Recurse -Force $source $target
             $success = $true
@@ -63,28 +62,33 @@ function Copy-WithRetry($source, $target) {
     }
 
     if (-not $success) {
-        Write-Host "ERROR: Failed to copy from $source to $target"
+        Write-Host "FEHLER: Kopieren von $source nach $target fehlgeschlagen!" -ForegroundColor Red
         exit 1
     }
 }
 
-Write-Host "Copying files..."
+Write-Host "Kopiere Dateien..."
 Copy-WithRetry "$deployDir\*" $TargetDeploy
+
+if (Test-Path "$deployDir\.env") {
+    Copy-WithRetry "$deployDir\.env" $TargetDeploy
+}
 
 $daemonSource = "$packageRoot\system-daemon"
 if (-not (Test-Path $daemonSource)) {
-    Write-Host "ERROR: system-daemon directory missing in package."
+    Write-Host "system-daemon wurde nicht gefunden!" -ForegroundColor Red
     exit 1
 }
 Copy-WithRetry "$daemonSource\*" $TargetDaemon
 
+
 # -------------------------------------------------------------
-# 4. Validate .env File
+# 4. .env prüfen
 # -------------------------------------------------------------
 $envPath = "$TargetDeploy\.env"
 
 if (-not (Test-Path $envPath)) {
-    Write-Host "ERROR: .env file is missing in target deploy directory."
+    Write-Host ".env Datei fehlt im deploy Ordner!" -ForegroundColor Red
     exit 1
 }
 
@@ -94,53 +98,57 @@ $portLine = ($envLines | Where-Object { $_ -match '^APP_PORT=' })
 $port     = if ($portLine) { $portLine -replace 'APP_PORT=','' } else { "8080" }
 
 Write-Host "Version: $version"
-Write-Host "Port:    $port"
-Write-Host ""
+Write-Host "Port:    $port`n"
+
 
 # -------------------------------------------------------------
-# 5. Docker Compose Path
+# 5. Docker Compose Pfad
 # -------------------------------------------------------------
 $composeFilePath = Join-Path $TargetDeploy $ComposeFile
 
 if (-not (Test-Path $composeFilePath)) {
-    Write-Host "ERROR: docker-compose.yml missing."
+    Write-Host "docker-compose.yml fehlt!" -ForegroundColor Red
     exit 1
 }
 
 # -------------------------------------------------------------
-# 6. Stop Docker Services
+# 6. Docker stoppen
 # -------------------------------------------------------------
-Write-Host "Stopping old dashboard containers..."
+Write-Host "Stoppe alte Dashboard-Container..."
 docker compose -f "$composeFilePath" down | Out-Null
 
+
 # -------------------------------------------------------------
-# 7. Start Docker Services
+# 7. Docker starten
 # -------------------------------------------------------------
-Write-Host "Pulling latest image..."
+Write-Host "⬇️  Lade aktuelles Image..."
 docker compose -f "$composeFilePath" pull
 
-Write-Host "Starting dashboard..."
+Write-Host "Starte Dashboard..."
 docker compose -f "$composeFilePath" up -d
 
 Start-Sleep 10
 
+
 # -------------------------------------------------------------
-# 8. HTTP Check
+# 8. HTTP-Test
 # -------------------------------------------------------------
-Write-Host "Checking dashboard availability..."
+Write-Host "rüfe Dashboard..."
+
 $uri = "http://localhost:$port/"
 
 try {
     Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 10 | Out-Null
-    Write-Host "Dashboard successfully started."
+    Write-Host "Dashboard erfolgreich gestartet!" -ForegroundColor Green
 } catch {
-    Write-Host "WARNING: Dashboard is running, but HTTP test failed."
+    Write-Host "Dashboard läuft, aber HTTP-Test fehlgeschlagen." -ForegroundColor Yellow
 }
 
+
 # -------------------------------------------------------------
-# 9. Install Auto-Update Daemon (Scheduled Task)
+# 9. Auto-Update Task
 # -------------------------------------------------------------
-Write-Host "Installing auto-update daemon..."
+Write-Host "Installiere Auto-Update Daemon..."
 
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
@@ -156,13 +164,13 @@ Register-ScheduledTask `
     -RunLevel Highest `
     -Force | Out-Null
 
-Write-Host "Auto-update daemon installed."
+Write-Host "Auto-Update Daemon installiert."
+
 
 # -------------------------------------------------------------
-# 10. Finished
+# 10. Fertig
 # -------------------------------------------------------------
-Write-Host ""
-Write-Host "INSTALLATION COMPLETE."
+Write-Host "`nINSTALLATION ABGESCHLOSSEN!" -ForegroundColor Green
 Write-Host "Dashboard: http://localhost:$port/"
-Write-Host "Auto-Update Task: $TaskName"
+Write-Host "Auto-Update: $TaskName"
 Write-Host "Logs: $LogDir"
