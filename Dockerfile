@@ -28,5 +28,5 @@
     EXPOSE 3000
     
     # Passe den Startbefehl ggf. an, falls dein Backend anders heißt
-    CMD ["node", "src/server.js"]
+    CMD ["node", "backend/src/server.js"]
     
