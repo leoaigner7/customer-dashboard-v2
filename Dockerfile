@@ -22,7 +22,7 @@
     COPY app/backend .
     
     # Frontend-Build in "public" legen (von dort kann server.js ausliefern)
-    COPY --from=frontend-build /app/frontend/dist ./public
+    COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
     
     ENV NODE_ENV=production
     EXPOSE 3000

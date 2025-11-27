@@ -1,9 +1,9 @@
-name: Release V3
+name: Release
 
 on:
   push:
     tags:
-      - '*'
+      - 'v*'
 
 jobs:
   build-release:
@@ -17,75 +17,123 @@ jobs:
       IMAGE_NAME: ${{ github.repository_owner }}/customer-dashboard-v2
 
     steps:
+
+      # ------------------------------
+      # CHECKOUT
+      # ------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set VERSION from tag
+
+      # ------------------------------
+      # VERSION AUS TAG LESEN
+      # ------------------------------
+      - name: Extract version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
+
+      # ------------------------------
+      # NODE SETUP
+      # ------------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # --- Frontend build ------------------------------------------------
+
+      # ------------------------------
+      # FRONTEND BUILD
+      # ------------------------------
       - name: Install frontend deps
         working-directory: app/frontend
-        run: npm install
+        run: npm ci || npm install
 
       - name: Build frontend
         working-directory: app/frontend
         run: npm run build
 
-      # --- Backend deps (Tests optional) ---------------------------------
+
+      # ------------------------------
+      # BACKEND BUILD
+      # ------------------------------
       - name: Install backend deps
         working-directory: app/backend
-        run: npm install
+        run: npm ci || npm install
 
-      # Hier könntest du noch Tests einhängen (npm test etc.)
 
-      # --- Docker Image bauen & testen ----------------------------------
-      - name: Login to GitHub Container Registry
+      # ------------------------------
+      # DOCKER BUILD
+      # ------------------------------
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build image
+      - name: Build Docker Image
         run: |
           docker build \
-            --build-arg VERSION=${VERSION} \
-            -t $REGISTRY/${IMAGE_NAME}:${VERSION} \
+            --build-arg VERSION=$VERSION \
+            -t $REGISTRY/${IMAGE_NAME}:$VERSION \
             -t $REGISTRY/${IMAGE_NAME}:latest .
 
-      - name: Test image (HTTP 200)
+
+      # ------------------------------
+      # IMAGE TEST (STABIL UND ROBUST)
+      # ------------------------------
+      - name: Test Docker Image
         run: |
-          docker run -d --rm -p 8080:3000 --name cd-test $REGISTRY/${IMAGE_NAME}:${VERSION}
-          sleep 15
-          curl -f http://localhost:8080/ || (docker logs cd-test && exit 1)
+          docker run -d -p 8088:3000 --name cd-test $REGISTRY/${IMAGE_NAME}:$VERSION
+
+          echo "Waiting for container to be ready..."
+          for i in {1..15}; do
+            sleep 2
+            if curl -f http://localhost:8088 >/dev/null 2>&1; then
+              echo "Container is ready!"
+              break
+            fi
+            echo "Still waiting..."
+            if [ $i -eq 15 ]; then
+              echo "Container did not start."
+              docker logs cd-test
+              exit 1
+            fi
+          done
+
           docker stop cd-test
 
-      - name: Push image
+
+      # ------------------------------
+      # IMAGE PUSH
+      # ------------------------------
+      - name: Push Images
         run: |
-          docker push $REGISTRY/${IMAGE_NAME}:${VERSION}
+          docker push $REGISTRY/${IMAGE_NAME}:$VERSION
           docker push $REGISTRY/${IMAGE_NAME}:latest
 
-      # --- Kundenpaket bauen --------------------------------------------
-      - name: Prepare customer package
+
+      # ------------------------------
+      # CUSTOMER PACKAGE ZIP
+      # ------------------------------
+      - name: Create customer package
         run: |
           mkdir -p package/deploy
           cp deploy/docker-compose.yml package/deploy/
           cp deploy/.env.example package/deploy/.env
-          echo "APP_VERSION=${VERSION}" >> package/deploy/.env
+          echo "APP_VERSION=$VERSION" >> package/deploy/.env
           cp deploy/install.ps1 package/deploy/
           cp README.md package/
-          echo "${VERSION}" > package/VERSION.txt
-          cd package
-          zip -r ../customer-dashboard-v2-${VERSION}.zip .
+          echo "$VERSION" > package/VERSION.txt
 
+          cd package
+          zip -r ../customer-dashboard-v2-$VERSION.zip .
+
+
+      # ------------------------------
+      # CREATE RELEASE
+      # ------------------------------
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.VERSION }}
           files: customer-dashboard-v2-${{ env.VERSION }}.zip
