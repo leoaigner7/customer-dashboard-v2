@@ -18,6 +18,6 @@
   },
 
   "notification": {
-    "logFile": "../deploy/system-daemon.log"
+  "logFile": "../../deploy/system-daemon.log"
   }
 }
