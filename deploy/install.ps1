@@ -5,21 +5,17 @@ Param(
 Write-Host "=== Customer Dashboard Installer (Windows) ===`n" -ForegroundColor Cyan
 
 # -------------------------------------------------------------
-# 1. Bestimme Verzeichnisse
+# 1. Verzeichnisse bestimmen
 # -------------------------------------------------------------
 
-# Ordner, in dem das Skript liegt -> ...\deploy
-$deployDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$deployDir   = Split-Path -Parent $MyInvocation.MyCommand.Path          # ...\deploy
+$packageRoot = Split-Path -Parent $deployDir                            # ...\customer-dashboard-x.x.x
 
-# Root des Pakets -> ...\customer-dashboard-v2-X.X.X
-$packageRoot = Split-Path -Parent $deployDir
-
-# Zielpfade beim Kunden
-$InstallDir = "C:\CustomerDashboard"
-$TargetDeploy = "$InstallDir\deploy"
-$TargetDaemon = "$InstallDir\system-daemon"
-$LogDir = "$InstallDir\logs"
-$TaskName = "CustomerDashboardAutoUpdater"
+$InstallDir    = "C:\CustomerDashboard"
+$TargetDeploy  = "$InstallDir\deploy"
+$TargetDaemon  = "$InstallDir\system-daemon"
+$LogDir        = "$InstallDir\logs"
+$TaskName      = "CustomerDashboardAutoUpdater"
 
 Write-Host "Installer liegt in:      $deployDir"
 Write-Host "Paketwurzelverzeichnis: $packageRoot`n"
@@ -28,31 +24,52 @@ Write-Host "Paketwurzelverzeichnis: $packageRoot`n"
 # -------------------------------------------------------------
 # 2. Zielverzeichnis erstellen
 # -------------------------------------------------------------
-Write-Host "📁 Erstelle Installationsverzeichnis..."
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-New-Item -ItemType Directory -Force -Path $TargetDeploy | Out-Null
-New-Item -ItemType Directory -Force -Path $TargetDaemon | Out-Null
-New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+Write-Host "Erstelle Installationsverzeichnisse..."
+
+New-Item -ItemType Directory -Force -Path $InstallDir      | Out-Null
+New-Item -ItemType Directory -Force -Path $TargetDeploy    | Out-Null
+New-Item -ItemType Directory -Force -Path $TargetDaemon    | Out-Null
+New-Item -ItemType Directory -Force -Path $LogDir          | Out-Null
 
 
 # -------------------------------------------------------------
-# 3. Dateien kopieren (aus deploy/ und system-daemon/)
+# 3. Dateien kopieren (stabil, mit Retry)
 # -------------------------------------------------------------
-Write-Host "📦 Kopiere Dateien..."
+function Copy-WithRetry($source, $target) {
+    $success = $false
 
-# kopiere deploy/
-Copy-Item -Recurse -Force "$deployDir\*" $TargetDeploy
+    for ($i = 1; $i -le 5; $i++) {
+        try {
+            Copy-Item -Recurse -Force $source $target
+            $success = $true
+            break
+        } catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
 
-# kopiere system-daemon/
-if (-not (Test-Path "$packageRoot\system-daemon")) {
-    Write-Host "❌ FEHLER: system-daemon wurde im Paket nicht gefunden!" -ForegroundColor Red
+    if (-not $success) {
+        Write-Host "FEHLER: Kopieren von $source nach $target fehlgeschlagen!" -ForegroundColor Red
+        exit 1
+    }
+}
+
+Write-Host "Kopiere Dateien..."
+
+# deploy/
+Copy-WithRetry "$deployDir\*" $TargetDeploy
+
+# system-daemon/
+$daemonSource = "$packageRoot\system-daemon"
+if (-not (Test-Path $daemonSource)) {
+    Write-Host "FEHLER: system-daemon wurde im Paket nicht gefunden!" -ForegroundColor Red
     exit 1
 }
-Copy-Item -Recurse -Force "$packageRoot\system-daemon\*" $TargetDaemon
+Copy-WithRetry "$daemonSource\*" $TargetDaemon
 
 
 # -------------------------------------------------------------
-# 4. Arbeitsverzeichnis setzen
+# 4. Arbeitsverzeichnis
 # -------------------------------------------------------------
 Set-Location $TargetDeploy
 
@@ -61,14 +78,14 @@ Set-Location $TargetDeploy
 # 5. .env prüfen
 # -------------------------------------------------------------
 if (-not (Test-Path ".\.env")) {
-    Write-Host "❌ .env fehlt im deploy Ordner!" -ForegroundColor Red
+    Write-Host ".env fehlt im deploy Ordner!" -ForegroundColor Red
     exit 1
 }
 
 $envLines = Get-Content ".\.env"
 $version  = ($envLines | Where-Object { $_ -match '^APP_VERSION=' }) -replace 'APP_VERSION=',''
 $portLine = ($envLines | Where-Object { $_ -match '^APP_PORT=' })
-$port     = if ($portLine) { $portLine -replace 'APP_PORT=','' } else { "8088" }
+$port     = if ($portLine) { $portLine -replace 'APP_PORT=','' } else { "8080" }
 
 Write-Host "Version: $version"
 Write-Host "Port:    $port`n"
@@ -77,17 +94,17 @@ Write-Host "Port:    $port`n"
 # -------------------------------------------------------------
 # 6. Docker: alten Container stoppen
 # -------------------------------------------------------------
-Write-Host "🛑 Stoppe alte Dashboard-Container..."
+Write-Host "Stoppe alte Dashboard-Container..."
 docker compose down | Out-Null
 
 
 # -------------------------------------------------------------
-# 7. Neues Image pullen + starten
+# 7. Neues Image + Start
 # -------------------------------------------------------------
-Write-Host "📥 Lade aktuelles Image..."
+Write-Host "Lade aktuelles Image..."
 docker compose pull
 
-Write-Host "🚀 Starte Dashboard..."
+Write-Host "Starte Dashboard..."
 docker compose up -d
 
 Start-Sleep 10
@@ -96,24 +113,23 @@ Start-Sleep 10
 # -------------------------------------------------------------
 # 8. HTTP Check
 # -------------------------------------------------------------
-Write-Host "🌐 Prüfe Dashboard..."
+Write-Host "Prüfe Dashboard..."
 
 $uri = "http://localhost:$port/"
 
 try {
     $resp = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 10
-    Write-Host "✅ Dashboard erfolgreich gestartet!" -ForegroundColor Green
+    Write-Host "Dashboard erfolgreich gestartet!" -ForegroundColor Green
 } catch {
-    Write-Host "⚠ Dashboard läuft, aber HTTP Test fehlgeschlagen." -ForegroundColor Yellow
+    Write-Host "Dashboard läuft, aber HTTP Test fehlgeschlagen." -ForegroundColor Yellow
 }
 
 
 # -------------------------------------------------------------
-# 9. AUTO-UPDATE DAEMON INSTALLIEREN
+# 9. Auto-Update installieren
 # -------------------------------------------------------------
-Write-Host "🛠 Installiere Auto-Update Daemon..."
+Write-Host "Installiere Auto-Update Daemon..."
 
-# wenn Task existiert -> löschen
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
@@ -131,13 +147,13 @@ Register-ScheduledTask `
     -RunLevel Highest `
     -Force | Out-Null
 
-Write-Host "🔧 Auto-Update Daemon installiert und aktiviert."
+Write-Host "Auto-Update Daemon installiert."
 
 
 # -------------------------------------------------------------
-# 10. FERTIG
+# 10. Fertig
 # -------------------------------------------------------------
-Write-Host "`n🎉 INSTALLATION ABGESCHLOSSEN!" -ForegroundColor Green
-Write-Host "➡ Dashboard: http://localhost:$port/"
-Write-Host "➡ Auto-Update über Task Scheduler: $TaskName"
-Write-Host "➡ Logs: $LogDir"
+Write-Host "`n INSTALLATION ABGESCHLOSSEN!" -ForegroundColor Green
+Write-Host "Dashboard: http://localhost:$port/"
+Write-Host "Auto-Update: $TaskName"
+Write-Host "Logs: $LogDir"
