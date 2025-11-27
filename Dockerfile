@@ -4,7 +4,7 @@
     
     # Dependencies installieren
     COPY app/frontend/package*.json ./
-    RUN npm ci
+    RUN npm install
     
     # Source-Code kopieren und bauen
     COPY app/frontend .
@@ -16,7 +16,7 @@
     
     # Backend-Dependencies
     COPY app/backend/package*.json ./
-    RUN npm ci --only=production
+    RUN npm install --production
     
     # Backend-Code kopieren
     COPY app/backend .
