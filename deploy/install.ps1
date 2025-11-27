@@ -100,18 +100,18 @@ try {
     #Der Webserver antwortet korrekt → alles gut
     $resp = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 10
     if ($resp.StatusCode -eq 200) {
-        Write-Host "`n✅ Deployment erfolgreich!" -ForegroundColor Green
+        Write-Host "`n Deployment erfolgreich!" -ForegroundColor Green
         Write-Host "Customer Dashboard läuft unter: $uri`n" -ForegroundColor Green
         exit 0
     } else {
-        Write-Host "`n⚠ Deployment gestartet, aber HTTP-Status ist $($resp.StatusCode)." -ForegroundColor Yellow
+        Write-Host "`n Deployment gestartet, aber HTTP-Status ist $($resp.StatusCode)." -ForegroundColor Yellow
         exit 0
     }
 }
 # Container läuft zwar aber HTTP-Request schlägt fehl (Server nicht erreichbar, Fehler 500, etc.)
 # Kunde soll Logs anschauen
 catch {
-    Write-Host "`n⚠ Container läuft, aber HTTP-Check ist fehlgeschlagen: $_" -ForegroundColor Yellow
+    Write-Host "`n Container läuft, aber HTTP-Check ist fehlgeschlagen: $_" -ForegroundColor Yellow
     Write-Host "Bitte Logs mit 'docker compose logs' prüfen." -ForegroundColor Yellow
     exit 0
 }
