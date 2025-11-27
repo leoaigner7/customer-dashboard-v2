@@ -118,10 +118,17 @@ jobs:
       - name: Create customer package
         run: |
           mkdir -p package/deploy
+          mkdir -p package/system-daemon
+
           cp deploy/docker-compose.yml package/deploy/
           cp deploy/.env.example package/deploy/.env
           echo "APP_VERSION=$VERSION" >> package/deploy/.env
           cp deploy/install.ps1 package/deploy/
+          cp deploy/install.sh package/deploy/
+
+          cp -r system-daemon/* package/system-daemon/
+
+
           cp README.md package/
           echo "$VERSION" > package/VERSION.txt
 
