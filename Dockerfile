@@ -1,4 +1,6 @@
+# -------------------------------------
 # 1) FRONTEND BUILD
+# -------------------------------------
 FROM node:20 AS frontend-build
 
 WORKDIR /app/frontend
@@ -10,9 +12,9 @@ COPY app/frontend .
 RUN npm run build
 
 
-
-# 2) BACKEND + STATIC FILES
-
+# -------------------------------------
+# 2) BACKEND
+# -------------------------------------
 FROM node:20 AS backend
 
 WORKDIR /app/backend
@@ -22,7 +24,7 @@ RUN npm install --production
 
 COPY app/backend .
 
-# >>> Frontend Build hinein kopieren
+# >>> Frontend nach BACKEND/public kopieren
 COPY --from=frontend-build /app/frontend/dist ./public
 
 ENV NODE_ENV=production
