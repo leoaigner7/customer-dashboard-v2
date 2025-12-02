@@ -27,7 +27,7 @@ app.use("/api/settings", createSettingsRouter());
 app.use("/api/logs", createLogsRouter());
 
 // Static React build
-const frontendPath = path.join(__dirname, "..", "..", "frontend", "dist");
+const frontendPath = path.join(__dirname, "public");
 app.use(express.static(frontendPath));
 
 app.get("*", (_req, res) => {

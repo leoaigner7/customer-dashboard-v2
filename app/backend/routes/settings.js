@@ -1,5 +1,5 @@
 import express from "express";
-import { db } from "../db.js";
+import { db }  from "../db.js";
 import { authMiddleware } from "../auth.js";
 
 export function createSettingsRouter() {
