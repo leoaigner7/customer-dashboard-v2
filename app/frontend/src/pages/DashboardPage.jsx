@@ -10,9 +10,17 @@ export default function DashboardPage() {
 
   if (!data) return <div>Dashboard wird geladen...</div>;
 
+
+  const [version, setVersion] = useState("");
+
+useEffect(() => {
+  api.get("/api/version").then(res => setVersion(res.data.version));
+}, []);
+
+
   return (
     <div>
-      <h1>Dashboard 4.1.9</h1>
+      <h1>Dashboard {version}</h1>
       <div className="cards">
         {data.cards.map(card => (
           <div key={card.id} className="card">
