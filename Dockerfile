@@ -10,7 +10,7 @@ RUN cd backend && npm install --production
 COPY app/backend ./backend
 
 # Frontend build kopieren → RICHTIGER ORDNER!
-COPY --from=frontend-build /app/frontend/dist ./backend/public
+COPY --from=frontend-build /app/frontend/dist ./public
 
 ENV NODE_ENV=production
 EXPOSE 3000
