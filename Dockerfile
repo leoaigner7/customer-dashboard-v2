@@ -1,18 +1,31 @@
-# --- Stage 2: Backend + Serve Frontend ---
+# 1) FRONTEND BUILD
+FROM node:20 AS frontend-build
+
+WORKDIR /app/frontend
+
+COPY app/frontend/package*.json ./
+RUN npm install
+
+COPY app/frontend .
+RUN npm run build
+
+
+
+# 2) BACKEND + STATIC FILES
+
 FROM node:20 AS backend
-WORKDIR /app
 
-# Backend deps
-COPY app/backend/package*.json ./backend/
-RUN cd backend && npm install --production
+WORKDIR /app/backend
 
-# Backend code
-COPY app/backend ./backend
+COPY app/backend/package*.json ./
+RUN npm install --production
 
-# Frontend build kopieren → RICHTIGER ORDNER!
+COPY app/backend .
+
+# >>> Frontend Build hinein kopieren
 COPY --from=frontend-build /app/frontend/dist ./public
 
 ENV NODE_ENV=production
 EXPOSE 3000
 
-CMD ["node", "backend/src/server.js"]
+CMD ["node", "src/server.js"]
