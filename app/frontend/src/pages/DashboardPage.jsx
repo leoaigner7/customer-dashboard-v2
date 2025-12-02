@@ -3,20 +3,17 @@ import api from "../api";
 
 export default function DashboardPage() {
   const [data, setData] = useState(null);
+  const [version, setVersion] = useState("");
 
   useEffect(() => {
     api.get("/dashboard/widgets").then(res => setData(res.data));
   }, []);
 
+  useEffect(() => {
+    api.get("/api/version").then(res => setVersion(res.data.version));
+  }, []);
+
   if (!data) return <div>Dashboard wird geladen...</div>;
-
-
-  const [version, setVersion] = useState("");
-
-useEffect(() => {
-  api.get("/api/version").then(res => setVersion(res.data.version));
-}, []);
-
 
   return (
     <div>
