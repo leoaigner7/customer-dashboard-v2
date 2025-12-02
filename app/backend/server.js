@@ -26,6 +26,11 @@ app.use("/api/dashboard", createDashboardRouter());
 app.use("/api/settings", createSettingsRouter());
 app.use("/api/logs", createLogsRouter());
 
+// ✅ VERSION ENDPOINT
+app.get("/api/version", (_req, res) => {
+  res.json({ version: process.env.APP_VERSION || "unknown" });
+});
+
 // Static React build
 const frontendPath = path.join(__dirname, "public");
 app.use(express.static(frontendPath));
