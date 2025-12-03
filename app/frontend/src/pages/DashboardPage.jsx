@@ -3,21 +3,26 @@ import api from "../api";
 
 export default function DashboardPage() {
   const [data, setData] = useState(null);
-  const [version, setVersion] = useState("null");
+  const [version, setVersion] = useState("");
 
   useEffect(() => {
     api.get("/dashboard/widgets").then(res => setData(res.data));
   }, []);
-  
+
+  // Version IMMER direkt von Backend holen – NICHT via api.js
   useEffect(() => {
-    api.get("/api/version").then(res => setVersion(res.data.version));
+    fetch("/api/version")
+      .then(res => res.json())
+      .then(data => setVersion(data.version))
+      .catch(() => setVersion("unknown"));
   }, []);
 
   if (!data) return <div>Dashboard wird geladen...</div>;
 
   return (
     <div>
-    <h1>Dashboard {version ? `v${version}` : ""}</h1>
+      <h1>Dashboard {version ? `v${version}` : ""}</h1>
+
       <div className="cards">
         {data.cards.map(card => (
           <div key={card.id} className="card">
