@@ -117,7 +117,13 @@ jobs:
 
           cd package
           zip -r ../customer-dashboard-v2-$VERSION.zip .
-      
+     
+     
+         # 🔐 SHA256 GENERIEREN
+      - name: Create SHA256 checksum
+        run: |
+          sha256sum customer-dashboard-v2-$VERSION.zip > customer-dashboard-v2-$VERSION.zip.sha256
+        
         # RELEASE
       
       - name: Create GitHub Release

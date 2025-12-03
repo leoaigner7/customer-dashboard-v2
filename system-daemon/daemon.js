@@ -2,6 +2,9 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const AdmZip = require("adm-zip");
+const crypto = require("crypto");
+const { execSync } = require("child_process");
+
 const {
   readEnvVersion,
   writeEnvVersion,
@@ -24,10 +27,25 @@ const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
 const interval = config.checkIntervalMs || 300000;
 
 const OFFLINE_ZIP = config.offlineZip;
+const OFFLINE_HASH = config.offlineHash;
 const INSTALL_ROOT = config.installRoot;
+// WICHTIG: Staging als Geschwister-Ordner, nicht als Unterordner!
+const STAGING_DIR = INSTALL_ROOT + "_staging";
+
 const BACKUP_DIR = config.backup && config.backup.dir;
 const BACKUP_ENABLED = !!(config.backup && config.backup.enabled);
 const BACKUP_KEEP = (config.backup && config.backup.keep) || 3;
+
+
+// -------------------------------------------------------------
+// SHA256 HASH
+// -------------------------------------------------------------
+function sha256File(filePath) {
+  return crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(filePath))
+    .digest("hex");
+}
 
 
 // -------------------------------------------------------------
@@ -102,10 +120,7 @@ function copyRecursive(src, dest) {
     if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
     const entries = fs.readdirSync(src);
     for (const entry of entries) {
-      copyRecursive(
-        path.join(src, entry),
-        path.join(dest, entry)
-      );
+      copyRecursive(path.join(src, entry), path.join(dest, entry));
     }
   } else {
     const dir = path.dirname(dest);
@@ -127,7 +142,8 @@ function createBackup() {
     copyRecursive(INSTALL_ROOT, backupPath);
     pruneBackups();
     return backupPath;
-  } catch {
+  } catch (err) {
+    log("Backup failed: " + err.message, config);
     return null;
   }
 }
@@ -161,13 +177,53 @@ function restoreBackup(backupPath) {
 // -------------------------------------------------------------
 // Update anwenden
 // -------------------------------------------------------------
-function applyOfflineUpdate() {
+function applyOfflineUpdateToStaging() {
+  if (fs.existsSync(STAGING_DIR)) {
+    fs.rmSync(STAGING_DIR, { recursive: true, force: true });
+  }
+  fs.mkdirSync(STAGING_DIR, { recursive: true });
+
   const zip = new AdmZip(OFFLINE_ZIP);
-  zip.extractAllTo(INSTALL_ROOT, true);
+  zip.extractAllTo(STAGING_DIR, true);
 }
 
 function applyGithubUpdate(version) {
+  // Online-Update (Docker-Image ziehen, etc.)
   downloadImage(config, version);
+}
+
+
+// -------------------------------------------------------------
+// Staging-Compose (override auf Port 18080)
+// -------------------------------------------------------------
+function writeStagingOverride() {
+  const overridePath = path.join(STAGING_DIR, "compose.override.yml");
+  const content = `
+services:
+  ${config.target.serviceName}:
+    ports:
+      - "18080:3000"
+`;
+  fs.writeFileSync(overridePath, content.trim());
+  return overridePath;
+}
+
+function startStagingCompose() {
+  const composeFile = config.target.composeFile;
+  const override = path.join(STAGING_DIR, "compose.override.yml");
+
+  const cmd = `docker compose -f "${composeFile}" -f "${override}" up -d ${config.target.serviceName}`;
+  log("Starting staging compose: " + cmd, config);
+  execSync(cmd, { stdio: "inherit" });
+}
+
+function stopStagingCompose() {
+  const composeFile = config.target.composeFile;
+  const override = path.join(STAGING_DIR, "compose.override.yml");
+
+  const cmd = `docker compose -f "${composeFile}" -f "${override}" down`;
+  log("Stopping staging compose: " + cmd, config);
+  execSync(cmd, { stdio: "inherit" });
 }
 
 
@@ -179,6 +235,15 @@ async function checkHealth() {
 
   try {
     await axios.get(config.target.healthUrl, { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function checkStagingHealth() {
+  try {
+    await axios.get("http://localhost:18080/", { timeout: 5000 });
     return true;
   } catch {
     return false;
@@ -199,38 +264,131 @@ async function checkOnce() {
 
     const { version: latest, source } = await resolveLatestVersion();
 
-    if (!latest || latest === current) return;
+    if (!latest || latest === current) {
+      return;
+    }
 
-    const backupPath = createBackup();
+    log(`New version available: ${latest} (source=${source}), current=${current}`, config);
 
-    if (source === "offline") applyOfflineUpdate();
-    if (source === "github") applyGithubUpdate(latest);
+    // --------------------- OFFLINE UPDATE ---------------------
+    if (source === "offline") {
+      // 1) Hash prüfen
+      if (!OFFLINE_HASH || !fs.existsSync(OFFLINE_HASH)) {
+        log("Hash file missing: " + OFFLINE_HASH, config);
+        return;
+      }
 
-    writeEnvVersion(
-      BASE_DIR,
-      config.target.envFile,
-      config.target.versionKey,
-      latest
-    );
+      const expected = fs.readFileSync(OFFLINE_HASH, "utf8").trim();
+      const actual = sha256File(OFFLINE_ZIP).trim();
 
-    restartDashboard(
-      BASE_DIR,
-      config.target.composeFile,
-      config.target.serviceName
-    );
+      if (expected !== actual) {
+        log("ZIP Hash mismatch – ABORTING offline update!", config);
+        return;
+      }
 
-    const ok = await checkHealth();
-    if (!ok && BACKUP_ENABLED) {
-      restoreBackup(backupPath);
+      log("Offline ZIP hash verified successfully", config);
+
+      // 2) Backup
+      const backupPath = createBackup();
+      log("Backup created at: " + backupPath, config);
+
+      // 3) Update nach STAGING
+      applyOfflineUpdateToStaging();
+      writeStagingOverride();
+
+      // 4) Staging-Compose starten
+      startStagingCompose();
+
+      // kleine Wartezeit
+      await new Promise(r => setTimeout(r, 5000));
+
+      const stagingOk = await checkStagingHealth();
+
+      // Staging wieder stoppen
+      stopStagingCompose();
+
+      if (!stagingOk) {
+        log("Staging healthcheck failed – restoring backup and aborting update.", config);
+        if (BACKUP_ENABLED) restoreBackup(backupPath);
+        return;
+      }
+
+      log("Staging healthcheck OK – performing atomic swap.", config);
+
+      // 5) Atomic Swap: STAGING → INSTALL_ROOT
+      if (fs.existsSync(INSTALL_ROOT)) {
+        fs.rmSync(INSTALL_ROOT, { recursive: true, force: true });
+      }
+      fs.renameSync(STAGING_DIR, INSTALL_ROOT);
+
+      // 6) Version in .env schreiben
+      writeEnvVersion(
+        BASE_DIR,
+        config.target.envFile,
+        config.target.versionKey,
+        latest
+      );
+
+      // 7) Produktiv-Dashboard neu starten
       restartDashboard(
         BASE_DIR,
         config.target.composeFile,
         config.target.serviceName
       );
+
+      // 8) Healthcheck produktiv
+      const ok = await checkHealth();
+      if (!ok && BACKUP_ENABLED) {
+        log("Production healthcheck failed – rolling back to backup.", config);
+        restoreBackup(backupPath);
+
+        restartDashboard(
+          BASE_DIR,
+          config.target.composeFile,
+          config.target.serviceName
+        );
+      }
+
+      return;
+    }
+
+    // --------------------- GITHUB / ONLINE UPDATE ---------------------
+    if (source === "github") {
+      const backupPath = createBackup();
+      log("Backup created at: " + backupPath, config);
+
+      applyGithubUpdate(latest);
+
+      writeEnvVersion(
+        BASE_DIR,
+        config.target.envFile,
+        config.target.versionKey,
+        latest
+      );
+
+      restartDashboard(
+        BASE_DIR,
+        config.target.composeFile,
+        config.target.serviceName
+      );
+
+      const ok = await checkHealth();
+      if (!ok && BACKUP_ENABLED) {
+        log("Online update healthcheck failed – rolling back to backup.", config);
+        restoreBackup(backupPath);
+
+        restartDashboard(
+          BASE_DIR,
+          config.target.composeFile,
+          config.target.serviceName
+        );
+      }
+
+      return;
     }
 
   } catch (err) {
-    log("Fehler: " + err.message, config);
+    log("Fehler im Update-Durchlauf: " + err.message, config);
   }
 }
 

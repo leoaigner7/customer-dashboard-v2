@@ -32,6 +32,12 @@ $TargetDaemon = "$InstallDir\system-daemon"
 $LogDir       = "$InstallDir\logs"
 $TaskName     = "CustomerDashboardAutoUpdater"
 
+$current = "C:\CustomerDashboard\current"
+$staging = "C:\CustomerDashboard\staging"
+
+$BackupDir = "C:\CustomerDashboard\backups"
+
+
 Write-Host "Installer liegt in:      $deployDir"
 Write-Host "Paketwurzelverzeichnis: $packageRoot`n"
 
@@ -44,6 +50,10 @@ New-Item -ItemType Directory -Force -Path $InstallDir    | Out-Null
 New-Item -ItemType Directory -Force -Path $TargetDeploy  | Out-Null
 New-Item -ItemType Directory -Force -Path $TargetDaemon  | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir        | Out-Null
+New-Item -ItemType Directory -Force -Path $current | Out-Null
+New-Item -ItemType Directory -Force -Path $staging | Out-Null
+New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
+
 
 
 # -------------------------------------------------------------
