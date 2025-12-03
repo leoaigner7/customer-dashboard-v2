@@ -18,32 +18,19 @@ jobs:
 
     steps:
 
-      # ------------------------------
-      # CHECKOUT
-      # ------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # ------------------------------
-      # VERSION AUS TAG LESEN
-      # ------------------------------
       - name: Extract version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
-
-      # ------------------------------
-      # NODE SETUP
-      # ------------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-
-      # ------------------------------
       # FRONTEND BUILD
-      # ------------------------------
+   
       - name: Install frontend deps
         working-directory: app/frontend
         run: npm ci || npm install
@@ -52,23 +39,16 @@ jobs:
         working-directory: app/frontend
         run: npm run build
 
+   
+      # BACKEND DEPS
 
-      # ------------------------------
-      # BACKEND BUILD
-      # ------------------------------
       - name: Install backend deps
         working-directory: app/backend
         run: npm ci || npm install
 
-      - name: Copy frontend build into backend
-        run: |
-          mkdir -p app/backend/public
-          cp -r app/frontend/dist/* app/backend/public/
 
-
-      # ------------------------------
       # DOCKER BUILD
-      # ------------------------------
+ 
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -83,10 +63,9 @@ jobs:
             -t $REGISTRY/${IMAGE_NAME}:$VERSION \
             -t $REGISTRY/${IMAGE_NAME}:latest .
 
-
-      # ------------------------------
-      # IMAGE TEST
-      # ------------------------------
+      
+      # TEST IMAGE
+      
       - name: Test Docker Image
         run: |
           docker run -d -p 8088:3000 --name cd-test $REGISTRY/${IMAGE_NAME}:$VERSION
@@ -94,7 +73,7 @@ jobs:
           echo "Waiting for container to be ready..."
           for i in {1..15}; do
             sleep 2
-            if curl -f http://localhost:8088 >/dev/null 2>&1; then
+            if curl -f http://localhost:8088/api/version >/dev/null 2>&1; then
               echo "Container is ready!"
               break
             fi
@@ -106,55 +85,41 @@ jobs:
             fi
           done
 
+          docker logs cd-test
           docker stop cd-test
 
-
-      # ------------------------------
-      # PUSH
-      # ------------------------------
-      - name: Push Images
+      
+      # PUSH IMAGE
+      
+      - name: Push Docker Images
         run: |
           docker push $REGISTRY/${IMAGE_NAME}:$VERSION
           docker push $REGISTRY/${IMAGE_NAME}:latest
 
-
-      # ------------------------------
-      # ZIP BAUEN FÜR KUNDEN
-      # ------------------------------
+      
+      # CREATE CUSTOMER ZIP
+      
       - name: Create customer package
         run: |
           mkdir -p package/deploy
           mkdir -p package/system-daemon
-          mkdir -p package/app/backend
-          mkdir -p package/app/frontend/dist
 
-          # Deploy
           cp deploy/docker-compose.yml package/deploy/
           cp deploy/install.ps1 package/deploy/
           cp deploy/install.sh package/deploy/
           cp deploy/.env.example package/deploy/.env
           echo "APP_VERSION=$VERSION" >> package/deploy/.env
 
-          # System daemon
           cp -r system-daemon/* package/system-daemon/
 
-          # Backend
-          cp -r app/backend/* package/app/backend/
-
-          # Frontend build
-          cp -r app/frontend/dist/* package/app/frontend/dist/
-
-          # Root files
           cp README.md package/
           echo "$VERSION" > package/VERSION.txt
 
           cd package
           zip -r ../customer-dashboard-v2-$VERSION.zip .
-
-
-      # ------------------------------
-      # GITHUB RELEASE
-      # ------------------------------
+      
+        # RELEASE
+      
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

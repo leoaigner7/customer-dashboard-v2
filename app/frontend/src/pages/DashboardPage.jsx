@@ -3,12 +3,12 @@ import api from "../api";
 
 export default function DashboardPage() {
   const [data, setData] = useState(null);
-  const [version, setVersion] = useState("");
+  const [version, setVersion] = useState("null");
 
   useEffect(() => {
     api.get("/dashboard/widgets").then(res => setData(res.data));
   }, []);
-
+  
   useEffect(() => {
     api.get("/api/version").then(res => setVersion(res.data.version));
   }, []);
@@ -17,7 +17,7 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <h1>Dashboard v{version}</h1>
+    <h1>Dashboard {version ? `v${version}` : ""}</h1>
       <div className="cards">
         {data.cards.map(card => (
           <div key={card.id} className="card">

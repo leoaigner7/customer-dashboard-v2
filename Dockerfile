@@ -13,6 +13,10 @@ COPY app/backend/package*.json ./
 RUN npm install --production
 COPY app/backend ./
 
+# VERSION ins Image einbauen:
+ARG VERSION
+ENV APP_VERSION=$VERSION
+
 # REACT BUILD hier rein:
 COPY --from=frontend-build /app/frontend/dist ./public
 
