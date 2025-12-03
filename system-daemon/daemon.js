@@ -3,7 +3,6 @@ const path = require("path");
 const axios = require("axios");
 const AdmZip = require("adm-zip");
 const crypto = require("crypto");
-const { execSync } = require("child_process");
 
 const {
   readEnvVersion,
@@ -29,24 +28,9 @@ const interval = config.checkIntervalMs || 300000;
 const OFFLINE_ZIP = config.offlineZip;
 const OFFLINE_HASH = config.offlineHash;
 const INSTALL_ROOT = config.installRoot;
-// WICHTIG: Staging als Geschwister-Ordner, nicht als Unterordner!
-const STAGING_DIR = INSTALL_ROOT + "_staging";
-
 const BACKUP_DIR = config.backup && config.backup.dir;
 const BACKUP_ENABLED = !!(config.backup && config.backup.enabled);
 const BACKUP_KEEP = (config.backup && config.backup.keep) || 3;
-
-
-// -------------------------------------------------------------
-// SHA256 HASH
-// -------------------------------------------------------------
-function sha256File(filePath) {
-  return crypto
-    .createHash("sha256")
-    .update(fs.readFileSync(filePath))
-    .digest("hex");
-}
-
 
 // -------------------------------------------------------------
 // Versionen lesen
@@ -61,20 +45,28 @@ async function getGithubVersion() {
 
     let tag = res.data.tag_name || "";
     return tag.replace(/^v/i, "").trim();
-  } catch {
+  } catch (err) {
+    log("GitHub-Version konnte nicht gelesen werden: " + err.message, config);
     return null;
   }
 }
 
 function getOfflineVersion() {
-  if (!OFFLINE_ZIP || !fs.existsSync(OFFLINE_ZIP)) return null;
+  if (!OFFLINE_ZIP || !fs.existsSync(OFFLINE_ZIP)) {
+    return null;
+  }
 
   try {
     const zip = new AdmZip(OFFLINE_ZIP);
     const entry = zip.getEntry("VERSION.txt");
-    if (!entry) return null;
-    return zip.readAsText(entry).trim();
-  } catch {
+    if (!entry) {
+      log("Offline-ZIP enthält keine VERSION.txt", config);
+      return null;
+    }
+    const v = zip.readAsText(entry).trim();
+    return v || null;
+  } catch (err) {
+    log("Offline-Version konnte nicht gelesen werden: " + err.message, config);
     return null;
   }
 }
@@ -96,6 +88,8 @@ async function resolveLatestVersion() {
   const online = await getGithubVersion();
   const offline = getOfflineVersion();
 
+  log(`Remote-Versionen – GitHub: ${online || "-"} / Offline: ${offline || "-"}`, config);
+
   if (!online && !offline) return { version: null, source: "none" };
   if (online && !offline) return { version: online, source: "github" };
   if (!online && offline) return { version: offline, source: "offline" };
@@ -108,6 +102,45 @@ async function resolveLatestVersion() {
   };
 }
 
+// -------------------------------------------------------------
+// SHA-256 Validierung für Offline-ZIP
+// -------------------------------------------------------------
+function sha256File(filePath) {
+  const hash = crypto.createHash("sha256");
+  const data = fs.readFileSync(filePath);
+  hash.update(data);
+  return hash.digest("hex");
+}
+
+function verifyOfflineZip() {
+  if (!OFFLINE_ZIP || !fs.existsSync(OFFLINE_ZIP)) {
+    log("Offline-ZIP nicht vorhanden, überspringe Offline-Validierung.", config);
+    return false;
+  }
+  if (!OFFLINE_HASH || !fs.existsSync(OFFLINE_HASH)) {
+    log("Offline-Hash-Datei nicht vorhanden, Offline-Update NICHT erlaubt.", config);
+    return false;
+  }
+
+  try {
+    const expected = fs.readFileSync(OFFLINE_HASH, "utf8").split(/\s+/)[0].trim();
+    const actual = sha256File(OFFLINE_ZIP);
+
+    if (expected.toLowerCase() !== actual.toLowerCase()) {
+      log(
+        `SHA-256 Mismatch für Offline-ZIP. expected=${expected}, actual=${actual}. Abbruch.`,
+        config
+      );
+      return false;
+    }
+
+    log("SHA-256 für Offline-ZIP erfolgreich verifiziert.", config);
+    return true;
+  } catch (err) {
+    log("Fehler bei Offline-Hashprüfung: " + err.message, config);
+    return false;
+  }
+}
 
 // -------------------------------------------------------------
 // Backup + Rollback
@@ -120,7 +153,10 @@ function copyRecursive(src, dest) {
     if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
     const entries = fs.readdirSync(src);
     for (const entry of entries) {
-      copyRecursive(path.join(src, entry), path.join(dest, entry));
+      copyRecursive(
+        path.join(src, entry),
+        path.join(dest, entry)
+      );
     }
   } else {
     const dir = path.dirname(dest);
@@ -130,7 +166,7 @@ function copyRecursive(src, dest) {
 }
 
 function createBackup() {
-  if (!BACKUP_ENABLED) return null;
+  if (!BACKUP_ENABLED || !BACKUP_DIR) return null;
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = path.join(BACKUP_DIR, timestamp);
@@ -140,10 +176,11 @@ function createBackup() {
       fs.mkdirSync(BACKUP_DIR, { recursive: true });
     }
     copyRecursive(INSTALL_ROOT, backupPath);
+    log("Backup erstellt unter: " + backupPath, config);
     pruneBackups();
     return backupPath;
   } catch (err) {
-    log("Backup failed: " + err.message, config);
+    log("Backup fehlgeschlagen: " + err.message, config);
     return null;
   }
 }
@@ -162,241 +199,177 @@ function pruneBackups() {
 
   const toDelete = entries.slice(BACKUP_KEEP);
   for (const e of toDelete) {
-    fs.rmSync(path.join(BACKUP_DIR, e.name), { recursive: true, force: true });
+    const full = path.join(BACKUP_DIR, e.name);
+    try {
+      fs.rmSync(full, { recursive: true, force: true });
+      log("Altes Backup gelöscht: " + full, config);
+    } catch (err) {
+      log("Fehler beim Löschen von Backup: " + err.message, config);
+    }
   }
 }
 
 function restoreBackup(backupPath) {
-  if (!backupPath || !fs.existsSync(backupPath)) return;
+  if (!backupPath || !fs.existsSync(backupPath)) {
+    log("Kein gültiges Backup für Rollback vorhanden.", config);
+    return;
+  }
 
-  fs.rmSync(INSTALL_ROOT, { recursive: true, force: true });
-  copyRecursive(backupPath, INSTALL_ROOT);
+  try {
+    log("Rollback gestartet. Stelle Backup wieder her: " + backupPath, config);
+    fs.rmSync(INSTALL_ROOT, { recursive: true, force: true });
+    copyRecursive(backupPath, INSTALL_ROOT);
+    log("Rollback abgeschlossen.", config);
+  } catch (err) {
+    log("Rollback fehlgeschlagen: " + err.message, config);
+  }
 }
-
 
 // -------------------------------------------------------------
 // Update anwenden
 // -------------------------------------------------------------
-function applyOfflineUpdateToStaging() {
-  if (fs.existsSync(STAGING_DIR)) {
-    fs.rmSync(STAGING_DIR, { recursive: true, force: true });
+function applyOfflineUpdate() {
+  if (!verifyOfflineZip()) {
+    throw new Error("Offline-Update verweigert (Hashprüfung fehlgeschlagen).");
   }
-  fs.mkdirSync(STAGING_DIR, { recursive: true });
 
   const zip = new AdmZip(OFFLINE_ZIP);
-  zip.extractAllTo(STAGING_DIR, true);
+  zip.extractAllTo(INSTALL_ROOT, true);
+  log("Offline-Update aus ZIP extrahiert nach " + INSTALL_ROOT, config);
 }
 
 function applyGithubUpdate(version) {
-  // Online-Update (Docker-Image ziehen, etc.)
   downloadImage(config, version);
+  log("Docker-Image für Version " + version + " geladen.", config);
 }
-
-
-// -------------------------------------------------------------
-// Staging-Compose (override auf Port 18080)
-// -------------------------------------------------------------
-function writeStagingOverride() {
-  const overridePath = path.join(STAGING_DIR, "compose.override.yml");
-  const content = `
-services:
-  ${config.target.serviceName}:
-    ports:
-      - "18080:3000"
-`;
-  fs.writeFileSync(overridePath, content.trim());
-  return overridePath;
-}
-
-function startStagingCompose() {
-  const composeFile = config.target.composeFile;
-  const override = path.join(STAGING_DIR, "compose.override.yml");
-
-  const cmd = `docker compose -f "${composeFile}" -f "${override}" up -d ${config.target.serviceName}`;
-  log("Starting staging compose: " + cmd, config);
-  execSync(cmd, { stdio: "inherit" });
-}
-
-function stopStagingCompose() {
-  const composeFile = config.target.composeFile;
-  const override = path.join(STAGING_DIR, "compose.override.yml");
-
-  const cmd = `docker compose -f "${composeFile}" -f "${override}" down`;
-  log("Stopping staging compose: " + cmd, config);
-  execSync(cmd, { stdio: "inherit" });
-}
-
 
 // -------------------------------------------------------------
 // Healthcheck
 // -------------------------------------------------------------
 async function checkHealth() {
-  if (!config.target.healthUrl) return true;
+  if (!config.target || !config.target.healthUrl) {
+    log("Kein Healthcheck konfiguriert – überspringe.", config);
+    return true;
+  }
 
   try {
     await axios.get(config.target.healthUrl, { timeout: 5000 });
+    log("Healthcheck OK für " + config.target.healthUrl, config);
     return true;
-  } catch {
+  } catch (err) {
+    log("Healthcheck FEHLER: " + err.message, config);
     return false;
   }
 }
 
-async function checkStagingHealth() {
+// -------------------------------------------------------------
+// System-Validierung (einfach)
+// -------------------------------------------------------------
+function validateSystem() {
+  if (!INSTALL_ROOT) {
+    log("INSTALL_ROOT nicht gesetzt, breche Update ab.", config);
+    return false;
+  }
+
   try {
-    await axios.get("http://localhost:18080/", { timeout: 5000 });
-    return true;
-  } catch {
+    if (!fs.existsSync(INSTALL_ROOT)) {
+      fs.mkdirSync(INSTALL_ROOT, { recursive: true });
+    }
+  } catch (err) {
+    log("INSTALL_ROOT kann nicht erstellt/geschrieben werden: " + err.message, config);
     return false;
   }
-}
 
+  return true;
+}
 
 // -------------------------------------------------------------
 // Update-Durchlauf
 // -------------------------------------------------------------
 async function checkOnce() {
   try {
+    log("=== Update-Check gestartet ===", config);
+
+    if (!validateSystem()) {
+      log("System-Validierung fehlgeschlagen. Abbruch.", config);
+      return;
+    }
+
     const current = readEnvVersion(
       BASE_DIR,
       config.target.envFile,
       config.target.versionKey
     );
 
+    log("Aktuell installierte Version: " + (current || "(unbekannt)"), config);
+
     const { version: latest, source } = await resolveLatestVersion();
 
-    if (!latest || latest === current) {
+    if (!latest) {
+      log("Keine Remote-Version verfügbar.", config);
       return;
     }
 
-    log(`New version available: ${latest} (source=${source}), current=${current}`, config);
+    log(`Ermittelte Zielversion: ${latest} (Quelle: ${source})`, config);
 
-    // --------------------- OFFLINE UPDATE ---------------------
+    if (current === latest) {
+      log("System ist bereits auf dem neuesten Stand.", config);
+      return;
+    }
+
+    const backupPath = createBackup();
+
     if (source === "offline") {
-      // 1) Hash prüfen
-      if (!OFFLINE_HASH || !fs.existsSync(OFFLINE_HASH)) {
-        log("Hash file missing: " + OFFLINE_HASH, config);
-        return;
-      }
-
-      const expected = fs.readFileSync(OFFLINE_HASH, "utf8").trim();
-      const actual = sha256File(OFFLINE_ZIP).trim();
-
-      if (expected !== actual) {
-        log("ZIP Hash mismatch – ABORTING offline update!", config);
-        return;
-      }
-
-      log("Offline ZIP hash verified successfully", config);
-
-      // 2) Backup
-      const backupPath = createBackup();
-      log("Backup created at: " + backupPath, config);
-
-      // 3) Update nach STAGING
-      applyOfflineUpdateToStaging();
-      writeStagingOverride();
-
-      // 4) Staging-Compose starten
-      startStagingCompose();
-
-      // kleine Wartezeit
-      await new Promise(r => setTimeout(r, 5000));
-
-      const stagingOk = await checkStagingHealth();
-
-      // Staging wieder stoppen
-      stopStagingCompose();
-
-      if (!stagingOk) {
-        log("Staging healthcheck failed – restoring backup and aborting update.", config);
-        if (BACKUP_ENABLED) restoreBackup(backupPath);
-        return;
-      }
-
-      log("Staging healthcheck OK – performing atomic swap.", config);
-
-      // 5) Atomic Swap: STAGING → INSTALL_ROOT
-      if (fs.existsSync(INSTALL_ROOT)) {
-        fs.rmSync(INSTALL_ROOT, { recursive: true, force: true });
-      }
-      fs.renameSync(STAGING_DIR, INSTALL_ROOT);
-
-      // 6) Version in .env schreiben
-      writeEnvVersion(
-        BASE_DIR,
-        config.target.envFile,
-        config.target.versionKey,
-        latest
-      );
-
-      // 7) Produktiv-Dashboard neu starten
-      restartDashboard(
-        BASE_DIR,
-        config.target.composeFile,
-        config.target.serviceName
-      );
-
-      // 8) Healthcheck produktiv
-      const ok = await checkHealth();
-      if (!ok && BACKUP_ENABLED) {
-        log("Production healthcheck failed – rolling back to backup.", config);
-        restoreBackup(backupPath);
-
-        restartDashboard(
-          BASE_DIR,
-          config.target.composeFile,
-          config.target.serviceName
-        );
-      }
-
+      log("Wende OFFLINE-Update an.", config);
+      applyOfflineUpdate();
+    } else if (source === "github") {
+      log("Wende GITHUB-Update an.", config);
+      applyGithubUpdate(latest);
+    } else {
+      log("Unbekannte Quelle, breche Update ab.", config);
       return;
     }
 
-    // --------------------- GITHUB / ONLINE UPDATE ---------------------
-    if (source === "github") {
-      const backupPath = createBackup();
-      log("Backup created at: " + backupPath, config);
+    writeEnvVersion(
+      BASE_DIR,
+      config.target.envFile,
+      config.target.versionKey,
+      latest
+    );
+    log("APP_VERSION in .env auf " + latest + " gesetzt.", config);
 
-      applyGithubUpdate(latest);
+    restartDashboard(
+      BASE_DIR,
+      config.target.composeFile,
+      config.target.serviceName
+    );
+    log("Dashboard nach Update neu gestartet.", config);
 
-      writeEnvVersion(
-        BASE_DIR,
-        config.target.envFile,
-        config.target.versionKey,
-        latest
-      );
-
+    const ok = await checkHealth();
+    if (!ok && BACKUP_ENABLED) {
+      log("Update fehlgeschlagen – starte Rollback.", config);
+      restoreBackup(backupPath);
       restartDashboard(
         BASE_DIR,
         config.target.composeFile,
         config.target.serviceName
       );
-
-      const ok = await checkHealth();
-      if (!ok && BACKUP_ENABLED) {
-        log("Online update healthcheck failed – rolling back to backup.", config);
-        restoreBackup(backupPath);
-
-        restartDashboard(
-          BASE_DIR,
-          config.target.composeFile,
-          config.target.serviceName
-        );
-      }
-
-      return;
+    } else if (!ok) {
+      log("Update fehlgeschlagen, aber Backup ist deaktiviert.", config);
+    } else {
+      log("Update erfolgreich abgeschlossen.", config);
     }
 
   } catch (err) {
-    log("Fehler im Update-Durchlauf: " + err.message, config);
+    log("❌ Fehler im Update-Durchlauf: " + err.message, config);
   }
 }
-
 
 // -------------------------------------------------------------
 // Start
 // -------------------------------------------------------------
 async function main() {
+  log("Systemweiter Auto-Update-Daemon gestartet.", config);
   await checkOnce();
   setInterval(checkOnce, interval);
 }

@@ -1,3 +1,84 @@
+const fs = require("fs");
+const path = require("path");
+const { execSync } = require("child_process");
+
+// Hilfsfunktion, um relative Pfade aus config sauber aufzulösen
+function resolvePath(baseDir, rel) {
+  if (!rel) return baseDir;
+  if (path.isAbsolute(rel)) return rel;
+  return path.normalize(path.join(baseDir, rel));
+}
+
+// ENV-Version aus .env lesen
+function readEnvVersion(_baseDir, envFile, key) {
+  try {
+    if (!fs.existsSync(envFile)) return null;
+    const content = fs.readFileSync(envFile, "utf8");
+    const lines = content.split(/\r?\n/);
+    const line = lines.find(l => l.startsWith(key + "="));
+    if (!line) return null;
+    return line.substring(key.length + 1).trim();
+  } catch (err) {
+    console.error("readEnvVersion error:", err.message);
+    return null;
+  }
+}
+
+// ENV-Version in .env schreiben (Key ersetzen oder hinzufügen)
+function writeEnvVersion(_baseDir, envFile, key, version) {
+  let lines = [];
+  if (fs.existsSync(envFile)) {
+    const content = fs.readFileSync(envFile, "utf8");
+    lines = content.split(/\r?\n/);
+  }
+
+  let found = false;
+  const newLines = lines.map(line => {
+    if (line.startsWith(key + "=")) {
+      found = true;
+      return `${key}=${version}`;
+    }
+    return line;
+  });
+
+  if (!found) newLines.push(`${key}=${version}`);
+
+  fs.writeFileSync(envFile, newLines.join("\n"), "utf8");
+}
+
+// Docker-Image für eine Version laden
+function downloadImage(config, version) {
+  const template = config.artifacts && config.artifacts.imageTemplate;
+  if (!template) {
+    throw new Error("artifacts.imageTemplate nicht konfiguriert");
+  }
+  const image = template.replace("{version}", version);
+
+  execSync(`docker pull "${image}"`, { stdio: "inherit" });
+}
+
+// Dashboard Container neu starten (pull + up -d)
+function restartDashboard(_baseDir, composeFile, serviceName) {
+  if (!fs.existsSync(composeFile)) {
+    throw new Error("docker-compose.yml nicht gefunden: " + composeFile);
+  }
+
+  const serviceArg = serviceName ? ` ${serviceName}` : "";
+
+  execSync(`docker compose -f "${composeFile}" down${serviceArg}`, {
+    stdio: "inherit"
+  });
+
+  execSync(`docker compose -f "${composeFile}" pull${serviceArg}`, {
+    stdio: "inherit"
+  });
+
+  execSync(`docker compose -f "${composeFile}" up -d${serviceArg}`, {
+    stdio: "inherit"
+  });
+}
+
+// Logging mit Rotation (optional)
 function log(msg, config) {
   try {
     const stamp = new Date().toISOString();
@@ -5,26 +86,54 @@ function log(msg, config) {
 
     // Fallback: logs-Ordner im InstallDir
     const fallbackDir = "C:\\CustomerDashboard\\logs";
-    const fallbackFile = fallbackDir + "\\daemon.log";
+    const fallbackFile = path.join(fallbackDir, "daemon.log");
 
-    // 1. Zielpfad aus config
     let logPath = fallbackFile;
 
-    if (config.notification?.logFile) {
-      const candidate = resolvePath(__dirname, config.notification.logFile);
-      logPath = candidate;
+    if (config.notification && config.notification.logFile) {
+      logPath = resolvePath(__dirname, config.notification.logFile);
     }
 
-    // 2. Ordner anlegen (falls nicht existiert)
-    const targetDir = require("path").dirname(logPath);
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
+    const logDir = path.dirname(logPath);
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
     }
 
-    // 3. Schreiben
+    // einfache Rotation
+    try {
+      const maxSize = config.logging?.maxSize || 1024 * 1024;
+      const maxFiles = config.logging?.maxFiles || 5;
+
+      if (fs.existsSync(logPath)) {
+        const stat = fs.statSync(logPath);
+        if (stat.size > maxSize) {
+          // alte Dateien umbenennen: daemon.log -> daemon.log.1 -> ...
+          for (let i = maxFiles - 1; i >= 1; i--) {
+            const src = `${logPath}.${i}`;
+            const dst = `${logPath}.${i + 1}`;
+            if (fs.existsSync(src)) {
+              fs.renameSync(src, dst);
+            }
+          }
+          fs.renameSync(logPath, `${logPath}.1`);
+        }
+      }
+    } catch (e) {
+      console.error("Log-Rotation Fehler:", e.message);
+    }
+
     fs.appendFileSync(logPath, line);
     console.log(line.trim());
   } catch (err) {
     console.error("LOGGING ERROR:", err.message);
   }
 }
+
+module.exports = {
+  resolvePath,
+  readEnvVersion,
+  writeEnvVersion,
+  downloadImage,
+  restartDashboard,
+  log
+};

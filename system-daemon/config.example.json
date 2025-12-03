@@ -1,23 +1,38 @@
 {
+  "checkIntervalMs": 300000,
+  "mode": "auto-install",
+
   "updateApi": "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest",
 
-  "mode": "auto-install",
-  "checkIntervalMs": 60000,
+  "offlineZip": "C:\\CustomerDashboard\\updates\\customer-dashboard.zip",
+  "offlineHash": "C:\\CustomerDashboard\\updates\\customer-dashboard.zip.sha256",
+
+  "installRoot": "C:\\CustomerDashboard",
 
   "target": {
-    "type": "docker-dashboard",
-    "envFile": "../deploy/.env",
+    "envFile": "C:\\CustomerDashboard\\deploy\\.env",
+    "composeFile": "C:\\CustomerDashboard\\deploy\\docker-compose.yml",
     "versionKey": "APP_VERSION",
-    "composeFile": "../deploy/docker-compose.yml",
-    "serviceName": "dashboard"
+    "serviceName": "dashboard",
+    "healthUrl": "http://localhost:8080/"
   },
 
   "artifacts": {
-    "type": "docker-image",
     "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}"
   },
 
   "notification": {
-  "logFile": "../../deploy/system-daemon.log"
+    "logFile": "..\\logs\\daemon.log"
+  },
+
+  "backup": {
+    "enabled": true,
+    "dir": "C:\\CustomerDashboard\\backups",
+    "keep": 3
+  },
+
+  "logging": {
+    "maxSize": 1048576,
+    "maxFiles": 5
   }
 }
