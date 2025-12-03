@@ -92,6 +92,13 @@ if (-not (Test-Path $daemonSource)) {
 }
 Copy-WithRetry "$daemonSource\*" $TargetDaemon
 
+#erstellt config.js
+
+$daemonPath = "C:\CustomerDashboard\system-daemon"
+
+if (-Not (Test-Path "$daemonPath\config.json")) {
+    Copy-Item "$daemonPath\config.example.json" "$daemonPath\config.json"
+}
 
 # -------------------------------------------------------------
 # 4. .env prüfen
