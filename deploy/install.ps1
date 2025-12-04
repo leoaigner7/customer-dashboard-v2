@@ -10,7 +10,7 @@ Write-Host "=== Customer Dashboard Autoinstaller ==="
 # ---------------------------------------------------------
 # Robustes Entpacken
 # ---------------------------------------------------------
-function Unzip-Release {
+function Expand-Release {
     param(
         [string]$zipPath,
         [string]$destination
@@ -126,7 +126,7 @@ if (!(Test-Path $InstallRoot)) {
 # ---------------------------------------------------------
 # Release entpacken
 # ---------------------------------------------------------
-Unzip-Release -zipPath $zip -destination $InstallRoot
+Expand-Release -zipPath $zip -destination $InstallRoot
 
 # ---------------------------------------------------------
 # VERSION.txt lesen

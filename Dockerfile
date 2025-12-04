@@ -1,31 +1,31 @@
-### 1) FRONTEND BUILD
-FROM node:20 AS frontend_build
+# 1) FRONTEND BUILD
+FROM node:20 AS frontend-build
 WORKDIR /app/frontend
-
 COPY app/frontend/package*.json ./
 RUN npm install
-
 COPY app/frontend ./
 RUN npm run build
 
 
-### 2) BACKEND BUILD
+# 2) BACKEND BUILD
 FROM node:20 AS backend
-WORKDIR /app/backend
+WORKDIR /app
 
-# Backend packages
-COPY app/backend/package*.json ./
-RUN npm install --production
+# COPY BACKEND
+COPY app/backend/package*.json ./backend/
+RUN cd backend && npm install --production
 
-# Backend code
-COPY app/backend ./
+COPY app/backend ./backend
 
-# Copy frontend build output
-COPY --from=frontend_build /app/frontend/dist ../frontend/dist
-
+# COPY FRONTEND DIST (React build)
+COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 
+# ENV VARS
+ARG VERSION
+ENV APP_VERSION=$VERSION
 ENV NODE_ENV=production
+
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["node", "backend/server.js"]
