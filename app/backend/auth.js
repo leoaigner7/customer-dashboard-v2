@@ -1,10 +1,10 @@
-import jwt from "jsonwebtoken";
-import bcrypt from "bcryptjs";
-import { db } from "./db.js";
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const { db } = require("./db.js");
 
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_PLEASE";
 
-export function signUser(user) {
+function signUser(user) {
   return jwt.sign(
     { id: user.id, email: user.email, role: user.role },
     JWT_SECRET,
@@ -12,7 +12,7 @@ export function signUser(user) {
   );
 }
 
-export function authMiddleware(requiredRole = null) {
+function authMiddleware(requiredRole = null) {
   return (req, res, next) => {
     const header = req.headers.authorization;
     if (!header?.startsWith("Bearer ")) {
@@ -33,7 +33,7 @@ export function authMiddleware(requiredRole = null) {
   };
 }
 
-export async function seedAdmin() {
+async function seedAdmin() {
   const adminEmail = "admin@example.com";
 
   const existing = db
@@ -51,3 +51,9 @@ export async function seedAdmin() {
     );
   }
 }
+
+module.exports = {
+  signUser,
+  authMiddleware,
+  seedAdmin,
+};

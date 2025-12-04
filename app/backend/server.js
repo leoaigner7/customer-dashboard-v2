@@ -6,25 +6,23 @@ const auth = require("./auth");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(express.json());
 
-// API ROUTES
-app.use("/api/auth", auth);
 
-// VERSION ROUTE EINBINDEN (NEU)
-app.use("/api/version", require("./routes/version"));
+// VERSION ROUTE – **KORREKTER ABSOLUTER PFAD!**
+const versionRoute = require(path.join(__dirname, "routes", "version.js"));
+app.use("/api/version", versionRoute);
 
 // STATIC FRONTEND
 const frontendDist = path.join(__dirname, "../frontend/dist");
 app.use(express.static(frontendDist));
 
-// SPA fallback für React
+// SPA fallback
 app.get("*", (req, res) => {
   res.sendFile(path.join(frontendDist, "index.html"));
 });
 
-// START SERVER
+// START
 app.listen(PORT, () => {
   console.log(`Backend läuft auf Port ${PORT}`);
 });
