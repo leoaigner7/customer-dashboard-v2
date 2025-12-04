@@ -98,7 +98,7 @@ $daemonPath = "C:\CustomerDashboard\system-daemon"
 
 if (-Not (Test-Path "$daemonPath\config.json")) {
     Copy-Item "$daemonPath\config.example.json" "$daemonPath\config.json"
-}s
+}
 
 # -------------------------------------------------------------
 # 4. .env prüfen
