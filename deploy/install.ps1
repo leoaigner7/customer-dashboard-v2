@@ -10,30 +10,26 @@ Write-Host "=== Customer Dashboard Autoinstaller ==="
 # -----------------------------------------
 # FUNKTION: Release-Quelle ermitteln
 # -----------------------------------------
-function Get-ReleaseZip {
+function Find-ReleaseZip {
     Write-Host "Prüfe mögliche Quellen..."
 
-    # -----------------------------------------
-    # 1) OFFLINE ZIP (ECHTE Datei)
-    # -----------------------------------------
+    # 1) OFFLINE ZIP prüfen (ECHTE Datei)
     if (Test-Path $OfflineZip -PathType Leaf) {
         Write-Host "Offline-Paket gefunden: $OfflineZip"
         return $OfflineZip
     }
 
-    # Ist ein ORDNER → Warnung + ignorieren
+    # Falls ein Ordner existiert → Warnen & ignorieren
     if (Test-Path $OfflineZip -PathType Container) {
-        Write-Host "[WARN] Offline-Paket ist ein ORDNER statt eines ZIP. Ignoriere Offline-Quelle."
+        Write-Host "[WARN] Offline-Paket ist ein ORDNER, kein ZIP. Ignoriere Offline-Quelle."
     }
 
-    # -----------------------------------------
-    # 2) GITHUB RELEASE
-    # -----------------------------------------
+    # 2) GitHub Release
     try {
         Write-Host "Hole Release-Infos von GitHub..."
 
-        $res = Invoke-WebRequest -Uri $GithubApi -UseBasicParsing
-        $json = $res.Content | ConvertFrom-Json
+        $response = Invoke-WebRequest -Uri $GithubApi -UseBasicParsing
+        $json = $response.Content | ConvertFrom-Json
 
         $asset = $json.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1
 
@@ -46,28 +42,28 @@ function Get-ReleaseZip {
         }
     }
     catch {
-        Write-Host "[WARN] Konnte GitHub Release nicht laden."
+        Write-Host "[WARN] GitHub nicht erreichbar."
     }
 
     return $null
 }
 
 # -----------------------------------------
-# RELEASE ZIP finden
+# RELEASE ZIP LADEN
 # -----------------------------------------
-$zip = Get-ReleaseZip
+$zip = Find-ReleaseZip
 
 if (-not $zip) {
     Write-Host "[FEHLER] Keine Installationsquelle gefunden!"
     Write-Host "Offline erwartet: $OfflineZip"
-    Write-Host "oder Internet für GitHub."
+    Write-Host "oder funktionierende Internetverbindung (GitHub)."
     exit 1
 }
 
 Write-Host "Nutze Release-Paket: $zip"
 
 # -----------------------------------------
-# INSTALLATIONSVERZEICHNIS anlegen
+# INSTALLATIONSVERZEICHNIS ANLEGEN
 # -----------------------------------------
 if (!(Test-Path $InstallRoot)) {
     Write-Host "Erstelle Installationsverzeichnis: $InstallRoot"
@@ -75,56 +71,44 @@ if (!(Test-Path $InstallRoot)) {
 }
 
 # -----------------------------------------
-# FUNKTION: Robustes Zip-Entpacken
+# FUNKTION: Robustes und Fehlerfreies Zip-Entpacken
 # -----------------------------------------
-function Expand-ReleaseZip {
-    param(
-        [string]$ZipPath,
-        [string]$Destination
-    )
+function Expand-ReleaseZip($zipPath, $destination) {
 
     Write-Host "Entpacke Release..."
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-    # Versuch 1: Standard-Entpackung
     try {
-        [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $Destination)
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $destination)
         Write-Host "Standard-Entpackung erfolgreich."
         return
     }
     catch {
-        Write-Host "Standard-Entpackung fehlgeschlagen → manueller Fallback."
+        Write-Host "Standard-Entpackung fehlgeschlagen, starte manuelle Entpackung..."
     }
 
-    # Versuch 2: Manuelles Entpacken (100 % kompatibel)
+    $zipArchive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
     try {
-        $zipArchive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
-
         foreach ($entry in $zipArchive.Entries) {
-            $dest = Join-Path $Destination $entry.FullName
+            $dest = Join-Path $destination $entry.FullName
 
-            # Ordner erstellen
             $dir = Split-Path $dest
             if (!(Test-Path $dir)) {
                 New-Item -ItemType Directory -Path $dir | Out-Null
             }
 
-            # Ordner im ZIP haben keinen Namen
             if (-not $entry.Name) { continue }
 
             $entryStream = $entry.Open()
             $fileStream = [System.IO.File]::Open($dest, 'Create')
             $entryStream.CopyTo($fileStream)
-
             $fileStream.Close()
             $entryStream.Close()
         }
     }
     finally {
-        if ($zipArchive) {
-            $zipArchive.Dispose()
-        }
+        $zipArchive.Dispose()
     }
 
     Write-Host "Manuelle Entpackung abgeschlossen."
@@ -133,7 +117,7 @@ function Expand-ReleaseZip {
 # -----------------------------------------
 # RELEASE ENTZIPEN
 # -----------------------------------------
-Expand-ReleaseZip -ZipPath $zip -Destination $InstallRoot
+Expand-ReleaseZip -zipPath $zip -destination $InstallRoot
 
 # -----------------------------------------
 # VERSION.txt lesen
@@ -141,7 +125,7 @@ Expand-ReleaseZip -ZipPath $zip -Destination $InstallRoot
 $versionFile = Join-Path $InstallRoot "VERSION.txt"
 
 if (!(Test-Path $versionFile)) {
-    Write-Host "[FEHLER] VERSION.txt fehlt im entpackten Release!"
+    Write-Host "[FEHLER] VERSION.txt fehlt im Release!"
     exit 1
 }
 
@@ -167,7 +151,7 @@ if (!(Test-Path $logDir)) {
     New-Item -ItemType Directory $logDir | Out-Null
 }
 
-Write-Host "Log-Verzeichnis vorbereitet."
+Write-Host "Log-Ordner vorbereitet."
 
 # -----------------------------------------
 # system-daemon prüfen
@@ -176,7 +160,7 @@ $daemonDir = Join-Path $InstallRoot "system-daemon"
 $daemonScript = Join-Path $daemonDir "daemon.js"
 
 if (!(Test-Path $daemonScript)) {
-    Write-Host "[FEHLER] daemon.js fehlt im Release!"
+    Write-Host "[FEHLER] daemon.js fehlt!"
     exit 1
 }
 
@@ -191,34 +175,38 @@ if (!(Test-Path $NodePath)) {
 }
 
 Write-Host "Node gefunden."
-
 # -----------------------------------------
-# NSSM installieren
-# -----------------------------------------
-$nssm = Join-Path $InstallRoot "nssm.exe"
-
-if (!(Test-Path $nssm)) {
-    Write-Host "Lade NSSM..."
-    Invoke-WebRequest "https://nssm.cc/release/nssm-2.24.zip" -OutFile "$InstallRoot\nssm.zip"
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory("$InstallRoot\nssm.zip", $InstallRoot, $true)
-    Copy-Item "$InstallRoot\nssm-2.24\win64\nssm.exe" $nssm
-    Remove-Item "$InstallRoot\nssm-2.24" -Recurse -Force
-    Remove-Item "$InstallRoot\nssm.zip"
-}
-
-Write-Host "NSSM bereit."
-
-# -----------------------------------------
-# Windows Service einrichten
+# Windows Service EINRICHTEN (OHNE NSSM)
 # -----------------------------------------
 Write-Host "Installiere Windows Service 'CustomerDashboardDaemon'..."
 
-& $nssm install "CustomerDashboardDaemon" $NodePath $daemonScript
-& $nssm set "CustomerDashboardDaemon" AppDirectory $daemonDir
-& $nssm set "CustomerDashboardDaemon" Start SERVICE_AUTO_START
+$serviceName = "CustomerDashboardDaemon"
+$serviceDisplayName = "Customer Dashboard Updater"
+$serviceDescription = "Automatischer Update-Daemon für das Customer Dashboard"
+$binPath = "`"$NodePath`" `"$daemonScript`""
 
-& $nssm start "CustomerDashboardDaemon"
+# Falls Dienst existiert → erst löschen
+$existing = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+if ($existing) {
+    Write-Host "Dienst existiert bereits. Entferne alten Dienst..."
+    sc.exe stop $serviceName | Out-Null
+    sc.exe delete $serviceName | Out-Null
+    Start-Sleep -Seconds 2
+}
+
+# Dienst neu erstellen
+New-Service `
+    -Name $serviceName `
+    -BinaryPathName $binPath `
+    -DisplayName $serviceDisplayName `
+    -Description $serviceDescription `
+    -StartupType Automatic
+
+# Dienst starten
+Start-Service $serviceName
+
+Write-Host "Windows Service erfolgreich erstellt und gestartet."
+
 
 Write-Host ""
 Write-Host "==========================================="
