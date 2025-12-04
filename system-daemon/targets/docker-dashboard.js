@@ -1,3 +1,4 @@
+// system-daemon/targets/docker-dashboard.js
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
@@ -26,22 +27,26 @@ function readEnvVersion(_baseDir, envFile, key) {
 
 // ENV-Version in .env schreiben (Key ersetzen oder hinzufügen)
 function writeEnvVersion(_baseDir, envFile, key, version) {
-  let lines = [];
+  let content = "";
+
   if (fs.existsSync(envFile)) {
-    const content = fs.readFileSync(envFile, "utf8");
-    lines = content.split(/\r?\n/);
+    content = fs.readFileSync(envFile, "utf8");
   }
 
-  let found = false;
+  const lines = content.split(/\r?\n/);
+  let updated = false;
+
   const newLines = lines.map(line => {
     if (line.startsWith(key + "=")) {
-      found = true;
+      updated = true;
       return `${key}=${version}`;
     }
     return line;
   });
 
-  if (!found) newLines.push(`${key}=${version}`);
+  if (!updated) {
+    newLines.push(`${key}=${version}`);
+  }
 
   fs.writeFileSync(envFile, newLines.join("\n"), "utf8");
 }
@@ -57,7 +62,7 @@ function downloadImage(config, version) {
   execSync(`docker pull "${image}"`, { stdio: "inherit" });
 }
 
-// Dashboard Container neu starten (pull + up -d)
+// Dashboard-Container neu starten (down + pull + up -d)
 function restartDashboard(_baseDir, composeFile, serviceName) {
   if (!fs.existsSync(composeFile)) {
     throw new Error("docker-compose.yml nicht gefunden: " + composeFile);

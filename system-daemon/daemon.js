@@ -1,8 +1,10 @@
+// system-daemon/daemon.js
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const AdmZip = require("adm-zip");
 const crypto = require("crypto");
+const semver = require("semver");
 
 const {
   readEnvVersion,
@@ -25,12 +27,12 @@ if (!fs.existsSync(CONFIG_PATH)) {
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
 const interval = config.checkIntervalMs || 300000;
 
-const OFFLINE_ZIP = config.offlineZip;
+const OFFLINE_ZIP  = config.offlineZip;
 const OFFLINE_HASH = config.offlineHash;
 const INSTALL_ROOT = config.installRoot;
-const BACKUP_DIR = config.backup && config.backup.dir;
+const BACKUP_DIR   = config.backup && config.backup.dir;
 const BACKUP_ENABLED = !!(config.backup && config.backup.enabled);
-const BACKUP_KEEP = (config.backup && config.backup.keep) || 3;
+const BACKUP_KEEP    = (config.backup && config.backup.keep) || 3;
 
 // -------------------------------------------------------------
 // Versionen lesen
@@ -43,8 +45,22 @@ async function getGithubVersion() {
       headers: { "User-Agent": "customer-dashboard-system-daemon" }
     });
 
-    let tag = res.data.tag_name || "";
-    return tag.replace(/^v/i, "").trim();
+    const releases = res.data;
+    if (!Array.isArray(releases) || releases.length === 0) return null;
+
+    const valid = releases.filter(r => r.assets && r.assets.length > 0);
+    if (valid.length === 0) return null;
+
+    valid.sort((a, b) =>
+      semver.rcompare(
+        a.tag_name.replace(/^v/i, ""),
+        b.tag_name.replace(/^v/i, "")
+      )
+    );
+
+    const latest = valid[0].tag_name.replace(/^v/i, "").trim();
+    return latest;
+
   } catch (err) {
     log("GitHub-Version konnte nicht gelesen werden: " + err.message, config);
     return null;
@@ -88,11 +104,14 @@ async function resolveLatestVersion() {
   const online = await getGithubVersion();
   const offline = getOfflineVersion();
 
-  log(`Remote-Versionen – GitHub: ${online || "-"} / Offline: ${offline || "-"}`, config);
+  log(
+    `Remote-Versionen – GitHub: ${online || "-"} / Offline: ${offline || "-"}`,
+    config
+  );
 
   if (!online && !offline) return { version: null, source: "none" };
-  if (online && !offline) return { version: online, source: "github" };
-  if (!online && offline) return { version: offline, source: "offline" };
+  if (online && !offline)   return { version: online,  source: "github" };
+  if (!online && offline)   return { version: offline, source: "offline" };
 
   const winner = compareVersions(online, offline);
 
@@ -123,7 +142,10 @@ function verifyOfflineZip() {
   }
 
   try {
-    const expected = fs.readFileSync(OFFLINE_HASH, "utf8").split(/\s+/)[0].trim();
+    const expected = fs.readFileSync(OFFLINE_HASH, "utf8")
+      .split(/\s+/)[0]
+      .trim();
+
     const actual = sha256File(OFFLINE_ZIP);
 
     if (expected.toLowerCase() !== actual.toLowerCase()) {
@@ -276,7 +298,10 @@ function validateSystem() {
       fs.mkdirSync(INSTALL_ROOT, { recursive: true });
     }
   } catch (err) {
-    log("INSTALL_ROOT kann nicht erstellt/geschrieben werden: " + err.message, config);
+    log(
+      "INSTALL_ROOT kann nicht erstellt/geschrieben werden: " + err.message,
+      config
+    );
     return false;
   }
 
@@ -330,12 +355,15 @@ async function checkOnce() {
       return;
     }
 
+    // ⬇⬇⬇ WICHTIG: HIER IST DER FIX – alle 4 Parameter korrekt:
     writeEnvVersion(
       BASE_DIR,
       config.target.envFile,
       config.target.versionKey,
       latest
     );
+    // ⬆⬆⬆
+
     log("APP_VERSION in .env auf " + latest + " gesetzt.", config);
 
     restartDashboard(
