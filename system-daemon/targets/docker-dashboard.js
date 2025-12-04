@@ -1,141 +1,146 @@
 // system-daemon/targets/docker-dashboard.js
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { spawnSync } = require("child_process");
 
-// Hilfsfunktion, um relative Pfade aus config sauber aufzulösen
-function resolvePath(baseDir, rel) {
-  if (!rel) return baseDir;
-  if (path.isAbsolute(rel)) return rel;
-  return path.normalize(path.join(baseDir, rel));
+const BASE_DIR = path.join(__dirname, "..");
+
+// -------------------------------------------------------------
+// Logging
+// -------------------------------------------------------------
+function log(message, config) {
+  const timestamp = new Date().toISOString();
+  const line = `[${timestamp}] ${message}`;
+
+  console.log(line);
+
+  if (!config || !config.notification || !config.notification.logFile) {
+    return;
+  }
+
+  try {
+    const logFile = config.notification.logFile;
+    const fullPath = path.isAbsolute(logFile)
+      ? logFile
+      : path.join(BASE_DIR, logFile);
+
+    const dir = path.dirname(fullPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    fs.appendFileSync(fullPath, line + "\n", "utf8");
+  } catch (err) {
+    console.error("Fehler beim Schreiben ins Logfile:", err.message);
+  }
 }
 
-// ENV-Version aus .env lesen
-function readEnvVersion(_baseDir, envFile, key) {
+// -------------------------------------------------------------
+// .env Version lesen/schreiben
+// -------------------------------------------------------------
+function readEnvVersion(baseDir, envFile, versionKey) {
+  const filePath = envFile && path.isAbsolute(envFile)
+    ? envFile
+    : path.join(baseDir, envFile || "");
+
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
   try {
-    if (!fs.existsSync(envFile)) return null;
-    const content = fs.readFileSync(envFile, "utf8");
+    const content = fs.readFileSync(filePath, "utf8");
     const lines = content.split(/\r?\n/);
-    const line = lines.find(l => l.startsWith(key + "="));
+
+    const line = lines.find(l =>
+      l.trim().startsWith(versionKey + "=")
+    );
+
     if (!line) return null;
-    return line.substring(key.length + 1).trim();
+
+    const value = line.split("=", 2)[1];
+    return value ? value.trim() : null;
   } catch (err) {
-    console.error("readEnvVersion error:", err.message);
+    console.error("Fehler beim Lesen der .env:", err.message);
     return null;
   }
 }
 
-// ENV-Version in .env schreiben (Key ersetzen oder hinzufügen)
-function writeEnvVersion(_baseDir, envFile, key, version) {
-  let content = "";
+function writeEnvVersion(baseDir, envFile, versionKey, newVersion) {
+  const filePath = envFile && path.isAbsolute(envFile)
+    ? envFile
+    : path.join(baseDir, envFile || "");
 
-  if (fs.existsSync(envFile)) {
-    content = fs.readFileSync(envFile, "utf8");
+  let lines = [];
+  if (fs.existsSync(filePath)) {
+    const content = fs.readFileSync(filePath, "utf8");
+    lines = content.split(/\r?\n/);
   }
 
-  const lines = content.split(/\r?\n/);
-  let updated = false;
+  const needle = versionKey + "=";
+  const idx = lines.findIndex(l => l.trim().startsWith(needle));
 
-  const newLines = lines.map(line => {
-    if (line.startsWith(key + "=")) {
-      updated = true;
-      return `${key}=${version}`;
-    }
-    return line;
-  });
-
-  if (!updated) {
-    newLines.push(`${key}=${version}`);
+  if (idx >= 0) {
+    lines[idx] = `${versionKey}=${newVersion}`;
+  } else {
+    lines.push(`${versionKey}=${newVersion}`);
   }
 
-  fs.writeFileSync(envFile, newLines.join("\n"), "utf8");
+  const finalContent = lines.join("\n");
+  fs.writeFileSync(filePath, finalContent, "utf8");
 }
 
-// Docker-Image für eine Version laden
+// -------------------------------------------------------------
+// Docker Image ziehen
+// -------------------------------------------------------------
 function downloadImage(config, version) {
-  const template = config.artifacts && config.artifacts.imageTemplate;
-  if (!template) {
-    throw new Error("artifacts.imageTemplate nicht konfiguriert");
+  if (!config.artifacts || !config.artifacts.imageTemplate) {
+    throw new Error("imageTemplate in config.artifacts fehlt");
   }
+
+  const template = config.artifacts.imageTemplate;
   const image = template.replace("{version}", version);
 
-  execSync(`docker pull "${image}"`, { stdio: "inherit" });
+  log(`Pull Docker-Image: ${image}`, config);
+
+  const result = spawnSync("docker", ["pull", image], {
+    stdio: "inherit"
+  });
+
+  if (result.error) {
+    throw new Error("docker pull fehlgeschlagen: " + result.error.message);
+  }
+  if (result.status !== 0) {
+    throw new Error("docker pull exit code " + result.status);
+  }
 }
 
-// Dashboard-Container neu starten (down + pull + up -d)
-function restartDashboard(_baseDir, composeFile, serviceName) {
-  if (!fs.existsSync(composeFile)) {
-    throw new Error("docker-compose.yml nicht gefunden: " + composeFile);
+// -------------------------------------------------------------
+// Dashboard neustarten
+// -------------------------------------------------------------
+function restartDashboard(baseDir, composeFile, serviceName) {
+  const filePath = composeFile && path.isAbsolute(composeFile)
+    ? composeFile
+    : path.join(baseDir, composeFile || "");
+
+  const args = ["compose", "-f", filePath, "up", "-d"];
+  if (serviceName) {
+    args.push(serviceName);
   }
 
-  const serviceArg = serviceName ? ` ${serviceName}` : "";
+  console.log("Starte Docker Compose:", args.join(" "));
 
-  execSync(`docker compose -f "${composeFile}" down${serviceArg}`, {
+  const result = spawnSync("docker", args, {
     stdio: "inherit"
   });
 
-  execSync(`docker compose -f "${composeFile}" pull${serviceArg}`, {
-    stdio: "inherit"
-  });
-
-  execSync(`docker compose -f "${composeFile}" up -d${serviceArg}`, {
-    stdio: "inherit"
-  });
-}
-
-// Logging mit Rotation (optional)
-function log(msg, config) {
-  try {
-    const stamp = new Date().toISOString();
-    const line = `[${stamp}] ${msg}\n`;
-
-    // Fallback: logs-Ordner im InstallDir
-    const fallbackDir = "C:\\CustomerDashboard\\logs";
-    const fallbackFile = path.join(fallbackDir, "daemon.log");
-
-    let logPath = fallbackFile;
-
-    if (config.notification && config.notification.logFile) {
-      logPath = resolvePath(__dirname, config.notification.logFile);
-    }
-
-    const logDir = path.dirname(logPath);
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
-    }
-
-    // einfache Rotation
-    try {
-      const maxSize = config.logging?.maxSize || 1024 * 1024;
-      const maxFiles = config.logging?.maxFiles || 5;
-
-      if (fs.existsSync(logPath)) {
-        const stat = fs.statSync(logPath);
-        if (stat.size > maxSize) {
-          // alte Dateien umbenennen: daemon.log -> daemon.log.1 -> ...
-          for (let i = maxFiles - 1; i >= 1; i--) {
-            const src = `${logPath}.${i}`;
-            const dst = `${logPath}.${i + 1}`;
-            if (fs.existsSync(src)) {
-              fs.renameSync(src, dst);
-            }
-          }
-          fs.renameSync(logPath, `${logPath}.1`);
-        }
-      }
-    } catch (e) {
-      console.error("Log-Rotation Fehler:", e.message);
-    }
-
-    fs.appendFileSync(logPath, line);
-    console.log(line.trim());
-  } catch (err) {
-    console.error("LOGGING ERROR:", err.message);
+  if (result.error) {
+    console.error("Fehler beim Neustart via docker compose:", result.error.message);
+  } else if (result.status !== 0) {
+    console.error("docker compose exit code:", result.status);
   }
 }
 
 module.exports = {
-  resolvePath,
   readEnvVersion,
   writeEnvVersion,
   downloadImage,

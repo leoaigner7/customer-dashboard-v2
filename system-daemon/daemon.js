@@ -35,7 +35,7 @@ const BACKUP_ENABLED = !!(config.backup && config.backup.enabled);
 const BACKUP_KEEP    = (config.backup && config.backup.keep) || 3;
 
 // -------------------------------------------------------------
-// Versionen lesen
+// Versionen lesen – GitHub
 // -------------------------------------------------------------
 async function getGithubVersion() {
   if (!config.updateApi) return null;
@@ -45,21 +45,32 @@ async function getGithubVersion() {
       headers: { "User-Agent": "customer-dashboard-system-daemon" }
     });
 
-    const releases = res.data;
-    if (!Array.isArray(releases) || releases.length === 0) return null;
+    let tag = null;
 
-    const valid = releases.filter(r => r.assets && r.assets.length > 0);
-    if (valid.length === 0) return null;
+    // Fall 1: /releases → Array
+    if (Array.isArray(res.data)) {
+      const releases = res.data;
 
-    valid.sort((a, b) =>
-      semver.rcompare(
-        a.tag_name.replace(/^v/i, ""),
-        b.tag_name.replace(/^v/i, "")
-      )
-    );
+      const valid = releases.filter(r => r && r.tag_name);
+      if (valid.length === 0) return null;
 
-    const latest = valid[0].tag_name.replace(/^v/i, "").trim();
-    return latest;
+      valid.sort((a, b) =>
+        semver.rcompare(
+          a.tag_name.replace(/^v/i, ""),
+          b.tag_name.replace(/^v/i, "")
+        )
+      );
+
+      tag = valid[0].tag_name;
+    }
+    // Fall 2: /releases/latest → einzelnes Objekt
+    else if (res.data && typeof res.data === "object" && res.data.tag_name) {
+      tag = res.data.tag_name;
+    }
+
+    if (!tag) return null;
+    const normalized = tag.replace(/^v/i, "").trim();
+    return normalized || null;
 
   } catch (err) {
     log("GitHub-Version konnte nicht gelesen werden: " + err.message, config);
@@ -67,12 +78,29 @@ async function getGithubVersion() {
   }
 }
 
+// -------------------------------------------------------------
+// Versionen lesen – Offline-ZIP
+// -------------------------------------------------------------
 function getOfflineVersion() {
-  if (!OFFLINE_ZIP || !fs.existsSync(OFFLINE_ZIP)) {
+  if (!OFFLINE_ZIP) {
+    return null;
+  }
+
+  if (!fs.existsSync(OFFLINE_ZIP)) {
+    log("Offline-ZIP-Pfad existiert nicht: " + OFFLINE_ZIP, config);
     return null;
   }
 
   try {
+    const stat = fs.statSync(OFFLINE_ZIP);
+    if (stat.isDirectory()) {
+      log(
+        "Offline-ZIP-Pfad ist ein Verzeichnis, erwarte Datei: " + OFFLINE_ZIP,
+        config
+      );
+      return null;
+    }
+
     const zip = new AdmZip(OFFLINE_ZIP);
     const entry = zip.getEntry("VERSION.txt");
     if (!entry) {
@@ -87,6 +115,9 @@ function getOfflineVersion() {
   }
 }
 
+// -------------------------------------------------------------
+// Versionsvergleich (einfache Semver-Logik)
+// -------------------------------------------------------------
 function compareVersions(a, b) {
   const pa = a.split(".").map(Number);
   const pb = b.split(".").map(Number);
@@ -101,7 +132,7 @@ function compareVersions(a, b) {
 }
 
 async function resolveLatestVersion() {
-  const online = await getGithubVersion();
+  const online  = await getGithubVersion();
   const offline = getOfflineVersion();
 
   log(
@@ -355,14 +386,13 @@ async function checkOnce() {
       return;
     }
 
-    // ⬇⬇⬇ WICHTIG: HIER IST DER FIX – alle 4 Parameter korrekt:
+    // Version in .env updaten
     writeEnvVersion(
       BASE_DIR,
       config.target.envFile,
       config.target.versionKey,
       latest
     );
-    // ⬆⬆⬆
 
     log("APP_VERSION in .env auf " + latest + " gesetzt.", config);
 
