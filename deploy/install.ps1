@@ -13,10 +13,15 @@ Write-Host "=== Customer Dashboard Autoinstaller ==="
 function Find-ReleaseZip {
     Write-Host "Prüfe mögliche Quellen..."
 
-    # 1) OFFLINE ZIP
-    if (Test-Path $OfflineZip) {
+    # 1) OFFLINE ZIP prüfen (ECHTE Datei)
+    if (Test-Path $OfflineZip -PathType Leaf) {
         Write-Host "Offline-Paket gefunden: $OfflineZip"
         return $OfflineZip
+    }
+
+    # Falls ein Ordner existiert → Warnen & ignorieren
+    if (Test-Path $OfflineZip -PathType Container) {
+        Write-Host "[WARN] Offline-Paket ist ein ORDNER, kein ZIP. Ignoriere Offline-Quelle."
     }
 
     # 2) GitHub Release
@@ -50,7 +55,7 @@ $zip = Find-ReleaseZip
 
 if (-not $zip) {
     Write-Host "[FEHLER] Keine Installationsquelle gefunden!"
-    Write-Host "Erwartet Offline: $OfflineZip"
+    Write-Host "Offline erwartet: $OfflineZip"
     Write-Host "oder funktionierende Internetverbindung (GitHub)."
     exit 1
 }
@@ -66,7 +71,7 @@ if (!(Test-Path $InstallRoot)) {
 }
 
 # -----------------------------------------
-# FUNKTION: Robustes Entpacken (OHNE Encoding-Fehler)
+# FUNKTION: Robustes und Fehlerfreies Zip-Entpacken
 # -----------------------------------------
 function Unzip-Release($zipPath, $destination) {
 
@@ -84,20 +89,17 @@ function Unzip-Release($zipPath, $destination) {
         Write-Host "Standard-Entpackung fehlgeschlagen, starte manuelle Entpackung..."
     }
 
-    # Fallback: selbst entpacken (fehlerfrei)
+    # Fallback: selbst entpacken, 100% kompatibel
     $zipArchive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
     try {
-
         foreach ($entry in $zipArchive.Entries) {
             $dest = Join-Path $destination $entry.FullName
 
-            # Ordner erstellen
             $dir = Split-Path $dest
             if (!(Test-Path $dir)) {
                 New-Item -ItemType Directory -Path $dir | Out-Null
             }
 
-            # Ordner im ZIP haben keinen Namen
             if (-not $entry.Name) { continue }
 
             $entryStream = $entry.Open()
