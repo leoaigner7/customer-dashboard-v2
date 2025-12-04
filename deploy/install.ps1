@@ -73,14 +73,13 @@ if (!(Test-Path $InstallRoot)) {
 # -----------------------------------------
 # FUNKTION: Robustes und Fehlerfreies Zip-Entpacken
 # -----------------------------------------
-function Unzip-Release($zipPath, $destination) {
+function Expand-ReleaseZip($zipPath, $destination) {
 
     Write-Host "Entpacke Release..."
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
 
     try {
-        # Standardversuch
         [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $destination)
         Write-Host "Standard-Entpackung erfolgreich."
         return
@@ -89,7 +88,6 @@ function Unzip-Release($zipPath, $destination) {
         Write-Host "Standard-Entpackung fehlgeschlagen, starte manuelle Entpackung..."
     }
 
-    # Fallback: selbst entpacken, 100% kompatibel
     $zipArchive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
     try {
         foreach ($entry in $zipArchive.Entries) {
@@ -105,7 +103,6 @@ function Unzip-Release($zipPath, $destination) {
             $entryStream = $entry.Open()
             $fileStream = [System.IO.File]::Open($dest, 'Create')
             $entryStream.CopyTo($fileStream)
-
             $fileStream.Close()
             $entryStream.Close()
         }
