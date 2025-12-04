@@ -1,46 +1,30 @@
-import express from "express";
-import cors from "cors";
-import path from "path";
-import { fileURLToPath } from "url";
-import dotenv from "dotenv";
-
-import { seedAdmin } from "./auth.js";
-import { createUserRouter } from "./routes/users.js";
-import { createDashboardRouter } from "./routes/dashboard.js";
-import { createSettingsRouter } from "./routes/settings.js";
-import { createLogsRouter } from "./routes/logs.js";
-
-dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const express = require("express");
+const path = require("path");
+const db = require("./db");
+const auth = require("./auth");
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Middleware
 app.use(express.json());
 
-// API
-app.use("/api/auth", createUserRouter());
-app.use("/api/dashboard", createDashboardRouter());
-app.use("/api/settings", createSettingsRouter());
-app.use("/api/logs", createLogsRouter());
+// API ROUTES
+app.use("/api/auth", auth);
 
-// ✅ VERSION ENDPOINT
-app.get("/api/version", (_req, res) => {
-  res.json({ version: process.env.APP_VERSION || "unknown" });
+// VERSION ROUTE EINBINDEN (NEU)
+app.use("/api/version", require("./routes/version"));
+
+// STATIC FRONTEND
+const frontendDist = path.join(__dirname, "../frontend/dist");
+app.use(express.static(frontendDist));
+
+// SPA fallback für React
+app.get("*", (req, res) => {
+  res.sendFile(path.join(frontendDist, "index.html"));
 });
 
-// Static React build
-const frontendPath = path.join(__dirname, "public");
-app.use(express.static(frontendPath));
-
-app.get("*", (_req, res) => {
-  res.sendFile(path.join(frontendPath, "index.html"));
-});
-
-const port = process.env.PORT || 3000;
-
-seedAdmin().then(() => {
-  app.listen(port, () => console.log("Server läuft auf Port " + port));
+// START SERVER
+app.listen(PORT, () => {
+  console.log(`Backend läuft auf Port ${PORT}`);
 });
