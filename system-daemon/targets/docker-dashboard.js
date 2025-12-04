@@ -7,141 +7,124 @@ const { spawnSync } = require("child_process");
 // Logging
 // -------------------------------------------------------------
 function log(message, config) {
-  const timestamp = new Date().toISOString();
-  const line = `[${timestamp}] ${message}`;
-
+  const line = `[${new Date().toISOString()}] ${message}`;
   console.log(line);
 
-  if (!config || !config.notification || !config.notification.logFile) return;
+  if (!config || !config.notification || !config.notification.logFile) {
+    return;
+  }
 
   try {
     const logFile = config.notification.logFile;
-
-    // Relative Pfade zu system-daemon verarbeiten
-    const fullPath = path.isAbsolute(logFile)
+    const logPath = path.isAbsolute(logFile)
       ? logFile
       : path.join(__dirname, "..", logFile);
 
-    const dir = path.dirname(fullPath);
+    const dir = path.dirname(logPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    fs.appendFileSync(fullPath, line + "\n", "utf8");
-  } catch (err) {
-    console.error("Fehler beim Schreiben ins Logfile:", err.message);
+    fs.appendFileSync(logPath, line + "\n", "utf8");
+  } catch (e) {
+    console.error("Fehler beim Schreiben des Logfiles:", e.message);
   }
 }
 
 // -------------------------------------------------------------
-// .env Version lesen/schreiben
+// .env lesen / schreiben
 // -------------------------------------------------------------
-function readEnvVersion(baseDir, envFile, versionKey) {
-  const filePath = path.isAbsolute(envFile)
-    ? envFile
-    : path.join(baseDir, envFile || "");
-
-  if (!fs.existsSync(filePath)) return null;
-
+function readEnvVersion(baseDir, envPath, key) {
   try {
-    const content = fs.readFileSync(filePath, "utf8");
+    if (!envPath || !fs.existsSync(envPath)) return null;
+
+    const content = fs.readFileSync(envPath, "utf8");
     const lines = content.split(/\r?\n/);
 
-    const line = lines.find((l) => l.trim().startsWith(versionKey + "="));
+    const line = lines.find((l) => l.startsWith(key + "="));
     if (!line) return null;
 
-    const value = line.split("=", 2)[1];
-    return value ? value.trim() : null;
-  } catch (err) {
-    console.error("Fehler beim Lesen der .env:", err.message);
+    const value = line.substring((key + "=").length).trim();
+    return value || null;
+  } catch {
     return null;
   }
 }
 
-function writeEnvVersion(baseDir, envFile, versionKey, newVersion) {
-  const filePath = path.isAbsolute(envFile)
-    ? envFile
-    : path.join(baseDir, envFile || "");
+function writeEnvVersion(baseDir, envPath, key, value) {
+  try {
+    let lines = [];
+    if (fs.existsSync(envPath)) {
+      lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+    }
 
-  let lines = [];
-  if (fs.existsSync(filePath)) {
-    const content = fs.readFileSync(filePath, "utf8");
-    lines = content.split(/\r?\n/);
+    let found = false;
+    lines = lines.map((l) => {
+      if (l.startsWith(key + "=")) {
+        found = true;
+        return `${key}=${value}`;
+      }
+      return l;
+    });
+
+    if (!found) {
+      lines.push(`${key}=${value}`);
+    }
+
+    fs.writeFileSync(envPath, lines.join("\n"), "utf8");
+  } catch (e) {
+    console.error("Fehler beim Schreiben der .env:", e.message);
   }
-
-  const needle = versionKey + "=";
-  const idx = lines.findIndex((l) => l.trim().startsWith(needle));
-
-  if (idx >= 0) {
-    lines[idx] = `${versionKey}=${newVersion}`;
-  } else {
-    lines.push(`${versionKey}=${newVersion}`);
-  }
-
-  const finalContent = lines.join("\n");
-  fs.writeFileSync(filePath, finalContent, "utf8");
 }
 
 // -------------------------------------------------------------
-// Docker Image ziehen
+// Docker Image laden
 // -------------------------------------------------------------
-function downloadImage(config, version) {
-  if (!config.artifacts || !config.artifacts.imageTemplate) {
-    throw new Error("imageTemplate in config.artifacts fehlt");
+async function downloadImage(config, version) {
+  const template = config.artifacts && config.artifacts.imageTemplate;
+  if (!template) {
+    throw new Error("imageTemplate in config.artifacts fehlt.");
   }
 
-  const template = config.artifacts.imageTemplate;
   const image = template.replace("{version}", version);
-
-  log(`Pull Docker-Image: ${image}`, config);
+  log("Pull Docker-Image: " + image, config);
 
   const result = spawnSync("docker", ["pull", image], {
-    stdio: "inherit",
+    stdio: "inherit"
   });
 
-  if (result.error) {
-    throw new Error("docker pull fehlgeschlagen: " + result.error.message);
-  }
   if (result.status !== 0) {
-    throw new Error("docker pull exit code " + result.status);
+    throw new Error("docker pull fehlgeschlagen.");
   }
-
-  return image;
 }
 
 // -------------------------------------------------------------
-// Dashboard neustarten
+// Dashboard neu starten
 // -------------------------------------------------------------
-function restartDashboard(baseDir, composeFile, serviceName) {
-  const filePath = path.isAbsolute(composeFile)
-    ? composeFile
-    : path.join(baseDir, composeFile || "");
-
-  const args = ["compose", "-f", filePath, "up", "-d"];
-  if (serviceName) {
-    args.push(serviceName);
+async function restartDashboard(baseDir, composeFile, serviceName) {
+  if (!composeFile) {
+    throw new Error("composeFile ist nicht gesetzt.");
+  }
+  if (!serviceName) {
+    throw new Error("serviceName ist nicht gesetzt.");
   }
 
-  console.log("Starte Docker Compose:", args.join(" "));
+  const file = composeFile;
+  const args = ["compose", "-f", file, "up", "-d", serviceName];
 
   const result = spawnSync("docker", args, {
-    stdio: "inherit",
+    stdio: "inherit"
   });
 
-  if (result.error) {
-    console.error(
-      "Fehler beim Neustart via docker compose:",
-      result.error.message
-    );
-  } else if (result.status !== 0) {
-    console.error("docker compose exit code:", result.status);
+  if (result.status !== 0) {
+    throw new Error("docker compose up -d fehlgeschlagen.");
   }
 }
 
 module.exports = {
+  log,
   readEnvVersion,
   writeEnvVersion,
   downloadImage,
-  restartDashboard,
-  log,
+  restartDashboard
 };
