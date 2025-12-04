@@ -23,8 +23,7 @@ COPY app/backend ./
 # Copy frontend build output
 COPY --from=frontend_build /app/frontend/dist ../frontend/dist
 
-# Copy deploy .env into backend
-COPY deploy/.env ./.env
+
 
 ENV NODE_ENV=production
 EXPOSE 3000
