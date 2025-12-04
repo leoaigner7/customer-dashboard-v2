@@ -34,6 +34,10 @@ const BACKUP_DIR   = config.backup && config.backup.dir;
 const BACKUP_ENABLED = !!(config.backup && config.backup.enabled);
 const BACKUP_KEEP    = (config.backup && config.backup.keep) || 3;
 
+const VERSION_FILE = INSTALL_ROOT
+  ? path.join(INSTALL_ROOT, "VERSION.txt")
+  : null;
+
 // -------------------------------------------------------------
 // Versionen lesen – GitHub
 // -------------------------------------------------------------
@@ -116,7 +120,7 @@ function getOfflineVersion() {
 }
 
 // -------------------------------------------------------------
-// Versionsvergleich (einfache Semver-Logik)
+// Versionsvergleich (semver-fähig)
 // -------------------------------------------------------------
 function compareVersions(a, b) {
   const pa = a.split(".").map(Number);
@@ -316,7 +320,7 @@ async function checkHealth() {
 }
 
 // -------------------------------------------------------------
-// System-Validierung (einfach)
+// System-Validierung
 // -------------------------------------------------------------
 function validateSystem() {
   if (!INSTALL_ROOT) {
@@ -340,6 +344,52 @@ function validateSystem() {
 }
 
 // -------------------------------------------------------------
+// Versionen lesen / schreiben (automatisch, docker-unabhängig)
+// -------------------------------------------------------------
+function readInstalledVersion() {
+  let current = null;
+
+  // 1) Prefer: VERSION.txt
+  if (VERSION_FILE && fs.existsSync(VERSION_FILE)) {
+    try {
+      const v = fs.readFileSync(VERSION_FILE, "utf8").trim();
+      if (v) return v;
+    } catch (err) {
+      log("VERSION.txt konnte nicht gelesen werden: " + err.message, config);
+    }
+  }
+
+  // 2) Fallback: .env
+  current = readEnvVersion(
+    BASE_DIR,
+    config.target.envFile,
+    config.target.versionKey
+  );
+
+  return current || null;
+}
+
+function writeInstalledVersion(version) {
+  // 1) .env aktualisieren
+  writeEnvVersion(
+    BASE_DIR,
+    config.target.envFile,
+    config.target.versionKey,
+    version
+  );
+
+  // 2) VERSION.txt aktualisieren
+  if (VERSION_FILE) {
+    try {
+      fs.writeFileSync(VERSION_FILE, version + "\n", "utf8");
+      log("VERSION.txt auf " + version + " gesetzt.", config);
+    } catch (err) {
+      log("VERSION.txt konnte nicht geschrieben werden: " + err.message, config);
+    }
+  }
+}
+
+// -------------------------------------------------------------
 // Update-Durchlauf
 // -------------------------------------------------------------
 async function checkOnce() {
@@ -351,11 +401,7 @@ async function checkOnce() {
       return;
     }
 
-    const current = readEnvVersion(
-      BASE_DIR,
-      config.target.envFile,
-      config.target.versionKey
-    );
+    const current = readInstalledVersion();
 
     log("Aktuell installierte Version: " + (current || "(unbekannt)"), config);
 
@@ -386,15 +432,8 @@ async function checkOnce() {
       return;
     }
 
-    // Version in .env updaten
-    writeEnvVersion(
-      BASE_DIR,
-      config.target.envFile,
-      config.target.versionKey,
-      latest
-    );
-
-    log("APP_VERSION in .env auf " + latest + " gesetzt.", config);
+    // Installierte Version nach Update setzen
+    writeInstalledVersion(latest);
 
     restartDashboard(
       BASE_DIR,

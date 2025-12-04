@@ -15,6 +15,7 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: ${{ github.repository_owner }}/customer-dashboard-v2
+      VERSION: ${{ github.ref_name }}
 
     steps:
 
@@ -28,7 +29,7 @@ jobs:
       # VERSION AUS TAG LESEN
       # ------------------------------
       - name: Extract version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
 
       # ------------------------------
       # NODE SETUP
@@ -141,6 +142,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.VERSION }}
+          name: "Customer Dashboard v${{ env.VERSION }}"
           files: |
             customer-dashboard-v2-${{ env.VERSION }}.zip
             customer-dashboard-v2-${{ env.VERSION }}.zip.sha256
+

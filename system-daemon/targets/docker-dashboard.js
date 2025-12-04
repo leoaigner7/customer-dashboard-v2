@@ -3,8 +3,6 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const BASE_DIR = path.join(__dirname, "..");
-
 // -------------------------------------------------------------
 // Logging
 // -------------------------------------------------------------
@@ -14,15 +12,15 @@ function log(message, config) {
 
   console.log(line);
 
-  if (!config || !config.notification || !config.notification.logFile) {
-    return;
-  }
+  if (!config || !config.notification || !config.notification.logFile) return;
 
   try {
     const logFile = config.notification.logFile;
+
+    // Relative Pfade zu system-daemon verarbeiten
     const fullPath = path.isAbsolute(logFile)
       ? logFile
-      : path.join(BASE_DIR, logFile);
+      : path.join(__dirname, "..", logFile);
 
     const dir = path.dirname(fullPath);
     if (!fs.existsSync(dir)) {
@@ -39,22 +37,17 @@ function log(message, config) {
 // .env Version lesen/schreiben
 // -------------------------------------------------------------
 function readEnvVersion(baseDir, envFile, versionKey) {
-  const filePath = envFile && path.isAbsolute(envFile)
+  const filePath = path.isAbsolute(envFile)
     ? envFile
     : path.join(baseDir, envFile || "");
 
-  if (!fs.existsSync(filePath)) {
-    return null;
-  }
+  if (!fs.existsSync(filePath)) return null;
 
   try {
     const content = fs.readFileSync(filePath, "utf8");
     const lines = content.split(/\r?\n/);
 
-    const line = lines.find(l =>
-      l.trim().startsWith(versionKey + "=")
-    );
-
+    const line = lines.find((l) => l.trim().startsWith(versionKey + "="));
     if (!line) return null;
 
     const value = line.split("=", 2)[1];
@@ -66,7 +59,7 @@ function readEnvVersion(baseDir, envFile, versionKey) {
 }
 
 function writeEnvVersion(baseDir, envFile, versionKey, newVersion) {
-  const filePath = envFile && path.isAbsolute(envFile)
+  const filePath = path.isAbsolute(envFile)
     ? envFile
     : path.join(baseDir, envFile || "");
 
@@ -77,7 +70,7 @@ function writeEnvVersion(baseDir, envFile, versionKey, newVersion) {
   }
 
   const needle = versionKey + "=";
-  const idx = lines.findIndex(l => l.trim().startsWith(needle));
+  const idx = lines.findIndex((l) => l.trim().startsWith(needle));
 
   if (idx >= 0) {
     lines[idx] = `${versionKey}=${newVersion}`;
@@ -103,7 +96,7 @@ function downloadImage(config, version) {
   log(`Pull Docker-Image: ${image}`, config);
 
   const result = spawnSync("docker", ["pull", image], {
-    stdio: "inherit"
+    stdio: "inherit",
   });
 
   if (result.error) {
@@ -112,13 +105,15 @@ function downloadImage(config, version) {
   if (result.status !== 0) {
     throw new Error("docker pull exit code " + result.status);
   }
+
+  return image;
 }
 
 // -------------------------------------------------------------
 // Dashboard neustarten
 // -------------------------------------------------------------
 function restartDashboard(baseDir, composeFile, serviceName) {
-  const filePath = composeFile && path.isAbsolute(composeFile)
+  const filePath = path.isAbsolute(composeFile)
     ? composeFile
     : path.join(baseDir, composeFile || "");
 
@@ -130,11 +125,14 @@ function restartDashboard(baseDir, composeFile, serviceName) {
   console.log("Starte Docker Compose:", args.join(" "));
 
   const result = spawnSync("docker", args, {
-    stdio: "inherit"
+    stdio: "inherit",
   });
 
   if (result.error) {
-    console.error("Fehler beim Neustart via docker compose:", result.error.message);
+    console.error(
+      "Fehler beim Neustart via docker compose:",
+      result.error.message
+    );
   } else if (result.status !== 0) {
     console.error("docker compose exit code:", result.status);
   }
@@ -145,5 +143,5 @@ module.exports = {
   writeEnvVersion,
   downloadImage,
   restartDashboard,
-  log
+  log,
 };
