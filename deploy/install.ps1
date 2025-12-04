@@ -6,7 +6,7 @@ param(
 Write-Host "=== Customer Dashboard Installer ==="
 
 # -----------------------------------------
-# BASISPFAD ANLEGEN
+# INSTALLATIONSPFAL ANLEGEN
 # -----------------------------------------
 if (!(Test-Path $InstallRoot)) {
     Write-Host "Erstelle Installationsverzeichnis: $InstallRoot"
@@ -20,11 +20,11 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $zip = Join-Path $scriptDir "customer-dashboard.zip"
 
 if (!(Test-Path $zip)) {
-    Write-Host "❌ Release ZIP nicht gefunden: $zip"
+    Write-Host "[FEHLER] Release ZIP nicht gefunden: $zip"
     exit 1
 }
 
-Write-Host "📦 Entpacke Release-Paket..."
+Write-Host "Entpacke Release-Paket..."
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $InstallRoot, $true)
 
@@ -34,24 +34,24 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $versionFile = Join-Path $InstallRoot "VERSION.txt"
 
 if (!(Test-Path $versionFile)) {
-    Write-Host "❌ VERSION.txt fehlt im Paket!"
+    Write-Host "[FEHLER] VERSION.txt fehlt im Paket!"
     exit 1
 }
 
 $version = (Get-Content $versionFile).Trim()
-Write-Host "✔ Installierte Version: $version"
+Write-Host "Installierte Version: $version"
 
 # -----------------------------------------
 # .ENV GENERIEREN
 # -----------------------------------------
 $envPath = Join-Path $InstallRoot "deploy\.env"
-Write-Host "⚙ Erstelle .env..."
+Write-Host "Erstelle .env..."
 
 Set-Content -Path $envPath -Value "APP_VERSION=$version"
 Add-Content -Path $envPath "APP_PORT=8080"
 Add-Content -Path $envPath "NODE_ENV=production"
 
-Write-Host "✔ .env erstellt."
+Write-Host ".env erstellt."
 
 # -----------------------------------------
 # LOG-ORDNER
@@ -61,7 +61,7 @@ if (!(Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir | Out-Null
 }
 
-Write-Host "📝 Log-Ordner vorbereitet."
+Write-Host "Log-Ordner vorbereitet."
 
 # -----------------------------------------
 # SYSTEM-DAEMON PRÜFEN
@@ -69,25 +69,24 @@ Write-Host "📝 Log-Ordner vorbereitet."
 $daemonDir = Join-Path $InstallRoot "system-daemon"
 
 if (!(Test-Path $daemonDir)) {
-    Write-Host "❌ system-daemon Ordner fehlt!"
+    Write-Host "[FEHLER] system-daemon Ordner fehlt!"
     exit 1
 }
 
 $daemonScript = Join-Path $daemonDir "daemon.js"
-
-Write-Host "✔ Auto-Update-Daemon gefunden."
+Write-Host "Auto-Update-Daemon gefunden."
 
 # -----------------------------------------
 # NODE PRÜFEN
 # -----------------------------------------
 if (!(Test-Path $NodePath)) {
-    Write-Host "❌ Node.js wurde nicht gefunden unter:"
+    Write-Host "[FEHLER] Node.js wurde nicht gefunden unter:"
     Write-Host "   $NodePath"
     Write-Host "Bitte Node LTS installieren!"
     exit 1
 }
 
-Write-Host "✔ Node gefunden."
+Write-Host "Node gefunden."
 
 # -----------------------------------------
 # NSSM INSTALLIEREN
@@ -95,7 +94,7 @@ Write-Host "✔ Node gefunden."
 $nssm = Join-Path $InstallRoot "nssm.exe"
 
 if (!(Test-Path $nssm)) {
-    Write-Host "📥 Lade NSSM herunter..."
+    Write-Host "Lade NSSM..."
     Invoke-WebRequest "https://nssm.cc/release/nssm-2.24.zip" -OutFile "$InstallRoot\nssm.zip"
     [System.IO.Compression.ZipFile]::ExtractToDirectory("$InstallRoot\nssm.zip", $InstallRoot, $true)
 
@@ -104,12 +103,12 @@ if (!(Test-Path $nssm)) {
     Remove-Item "$InstallRoot\nssm.zip"
 }
 
-Write-Host "✔ NSSM bereit."
+Write-Host "NSSM bereit."
 
 # -----------------------------------------
 # WINDOWS SERVICE INSTALLIEREN
 # -----------------------------------------
-Write-Host "⚙ Installiere Windows Service 'CustomerDashboardDaemon'..."
+Write-Host "Installiere Windows Service 'CustomerDashboardDaemon'..."
 
 & $nssm install "CustomerDashboardDaemon" $NodePath $daemonScript
 & $nssm set "CustomerDashboardDaemon" AppDirectory $daemonDir
@@ -120,12 +119,14 @@ Write-Host "⚙ Installiere Windows Service 'CustomerDashboardDaemon'..."
 & $nssm start "CustomerDashboardDaemon"
 
 Write-Host ""
-Write-Host "✔ Auto-Update-Daemon als Service installiert und gestartet."
+Write-Host "Auto-Update-Daemon als Service installiert und gestartet."
 
 # -----------------------------------------
 # FERTIG
 # -----------------------------------------
 Write-Host ""
-Write-Host "🎉 Installation abgeschlossen!"
-Write-Host "Das Dashboard aktualisiert sich jetzt automatisch alle 5 Minuten."
-Write-Host "Logs unter: $InstallRoot\logs\daemon.log"
+Write-Host "------------------------------------------"
+Write-Host " INSTALLATION ABGESCHLOSSEN!"
+Write-Host " Dashboard aktualisiert sich automatisch."
+Write-Host " Logs liegen unter: $InstallRoot\logs\daemon.log"
+Write-Host "------------------------------------------"
