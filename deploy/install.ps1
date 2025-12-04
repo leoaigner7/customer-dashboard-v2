@@ -117,7 +117,7 @@ function Expand-ReleaseZip($zipPath, $destination) {
 # -----------------------------------------
 # RELEASE ENTZIPEN
 # -----------------------------------------
-Unzip-Release -zipPath $zip -destination $InstallRoot
+Expand-ReleaseZip -zipPath $zip -destination $InstallRoot
 
 # -----------------------------------------
 # VERSION.txt lesen
