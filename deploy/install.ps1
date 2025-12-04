@@ -1,208 +1,131 @@
-# Customer Dashboard Installer for Windows
-# VERSION 4.1.3 FINAL CLEAN
-
-Param(
-    [string]$ComposeFile = "docker-compose.yml"
+param(
+    [string]$InstallRoot = "C:\CustomerDashboard",
+    [string]$NodePath = "C:\Program Files\nodejs\node.exe"
 )
 
-Write-Host "=== Customer Dashboard Installer (Windows) ===`n" -ForegroundColor Cyan
+Write-Host "=== Customer Dashboard Installer ==="
 
-# -------------------------------------------------------------
-# 0. ADMIN CHECK
-# -------------------------------------------------------------
-If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(`
-    [Security.Principal.WindowsBuiltInRole] "Administrator"))
-{
-    Write-Host "Dieses Skript muss als ADMINISTRATOR ausgefuehrt werden!" -ForegroundColor Red
-    Write-Host "Rechtsklick auf PowerShell 'Als Administrator ausführen'" -ForegroundColor Yellow
+# -----------------------------------------
+# BASISPFAD ANLEGEN
+# -----------------------------------------
+if (!(Test-Path $InstallRoot)) {
+    Write-Host "Erstelle Installationsverzeichnis: $InstallRoot"
+    New-Item -ItemType Directory -Path $InstallRoot | Out-Null
+}
+
+# -----------------------------------------
+# RELEASE-PAKET ERKENNEN
+# -----------------------------------------
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$zip = Join-Path $scriptDir "customer-dashboard.zip"
+
+if (!(Test-Path $zip)) {
+    Write-Host "❌ Release ZIP nicht gefunden: $zip"
     exit 1
 }
 
-# -------------------------------------------------------------
-# 1. Verzeichnisse bestimmen
-# -------------------------------------------------------------
+Write-Host "📦 Entpacke Release-Paket..."
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $InstallRoot, $true)
 
-$deployDir   = $PSScriptRoot
-$packageRoot = Split-Path -Parent $PSScriptRoot
+# -----------------------------------------
+# VERSION.txt AUS PAKET LESEN
+# -----------------------------------------
+$versionFile = Join-Path $InstallRoot "VERSION.txt"
 
-
-$InstallDir   = "C:\CustomerDashboard"
-$TargetDeploy = "$InstallDir\deploy"
-$TargetDaemon = "$InstallDir\system-daemon"
-$LogDir       = "$InstallDir\logs"
-$TaskName     = "CustomerDashboardAutoUpdater"
-
-$current = "C:\CustomerDashboard\current"
-$staging = "C:\CustomerDashboard\staging"
-
-$BackupDir = "C:\CustomerDashboard\backups"
-
-
-Write-Host "Installer liegt in:      $deployDir"
-Write-Host "Paketwurzelverzeichnis: $packageRoot`n"
-
-
-# -------------------------------------------------------------
-# 2. Installationsverzeichnisse
-# -------------------------------------------------------------
-Write-Host "Erstelle Installationsverzeichnisse..."
-New-Item -ItemType Directory -Force -Path $InstallDir    | Out-Null
-New-Item -ItemType Directory -Force -Path $TargetDeploy  | Out-Null
-New-Item -ItemType Directory -Force -Path $TargetDaemon  | Out-Null
-New-Item -ItemType Directory -Force -Path $LogDir        | Out-Null
-New-Item -ItemType Directory -Force -Path $current | Out-Null
-New-Item -ItemType Directory -Force -Path $staging | Out-Null
-New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
-
-
-
-# -------------------------------------------------------------
-# 3. Robuster Kopiervorgang (mit Retry)
-# -------------------------------------------------------------
-function Copy-WithRetry($source, $target) {
-    $success = $false
-
-    for ($i=1; $i -le 5; $i++) {
-        try {
-            Copy-Item -Recurse -Force $source $target
-            $success = $true
-            break
-        } catch {
-            Start-Sleep -Milliseconds 500
-        }
-    }
-
-    if (-not $success) {
-        Write-Host "FEHLER: Kopieren von $source nach $target fehlgeschlagen!" -ForegroundColor Red
-        exit 1
-    }
-}
-
-Write-Host "Kopiere Dateien..."
-Copy-WithRetry "$deployDir\*" $TargetDeploy
-
-if (Test-Path "$deployDir\.env") {
-    Copy-WithRetry "$deployDir\.env" $TargetDeploy
-}
-
-$daemonSource = "$packageRoot\system-daemon"
-if (-not (Test-Path $daemonSource)) {
-    Write-Host "system-daemon wurde nicht gefunden!" -ForegroundColor Red
-    exit 1
-}
-Copy-WithRetry "$daemonSource\*" $TargetDaemon
-
-#erstellt config.js
-
-$daemonPath = "C:\CustomerDashboard\system-daemon"
-
-if (-Not (Test-Path "$daemonPath\config.json")) {
-    Copy-Item "$daemonPath\config.example.json" "$daemonPath\config.json"
-}
-
-# -------------------------------------------------------------
-# 4. .env prüfen
-# -------------------------------------------------------------
-$envPath = "$TargetDeploy\.env"
-
-$maxWait = 20
-$envFound = $false
-
-for ($i = 1; $i -le $maxWait; $i++) {
-    if (Test-Path $envPath) {
-        $envFound = $true
-        break
-    }
-    Start-Sleep -Milliseconds 200
-}
-
-if (-not $envFound) {
-    Write-Host "ERROR: .env is not visible in C:\CustomerDashboard\deploy."
-    Write-Host "Files are copied correctly, but filesystem has not released the handle."
-    Write-Host "Stopping installation for safety."
+if (!(Test-Path $versionFile)) {
+    Write-Host "❌ VERSION.txt fehlt im Paket!"
     exit 1
 }
 
+$version = (Get-Content $versionFile).Trim()
+Write-Host "✔ Installierte Version: $version"
 
-$envLines = Get-Content $envPath
-$version  = ($envLines | Where-Object { $_ -match '^APP_VERSION=' }) -replace 'APP_VERSION=',''
-$portLine = ($envLines | Where-Object { $_ -match '^APP_PORT=' })
-$port     = if ($portLine) { $portLine -replace 'APP_PORT=','' } else { "8080" }
+# -----------------------------------------
+# .ENV GENERIEREN
+# -----------------------------------------
+$envPath = Join-Path $InstallRoot "deploy\.env"
+Write-Host "⚙ Erstelle .env..."
 
-Write-Host "Version: $version"
-Write-Host "Port:    $port`n"
+Set-Content -Path $envPath -Value "APP_VERSION=$version"
+Add-Content -Path $envPath "APP_PORT=8080"
+Add-Content -Path $envPath "NODE_ENV=production"
 
+Write-Host "✔ .env erstellt."
 
-# -------------------------------------------------------------
-# 5. Docker Compose Pfad
-# -------------------------------------------------------------
-$composeFilePath = Join-Path $TargetDeploy $ComposeFile
+# -----------------------------------------
+# LOG-ORDNER
+# -----------------------------------------
+$logDir = Join-Path $InstallRoot "logs"
+if (!(Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+}
 
-if (-not (Test-Path $composeFilePath)) {
-    Write-Host "docker-compose.yml fehlt!" -ForegroundColor Red
+Write-Host "📝 Log-Ordner vorbereitet."
+
+# -----------------------------------------
+# SYSTEM-DAEMON PRÜFEN
+# -----------------------------------------
+$daemonDir = Join-Path $InstallRoot "system-daemon"
+
+if (!(Test-Path $daemonDir)) {
+    Write-Host "❌ system-daemon Ordner fehlt!"
     exit 1
 }
 
-# -------------------------------------------------------------
-# 6. Docker stoppen
-# -------------------------------------------------------------
-Write-Host "Stoppe alte Dashboard-Container..."
-docker compose -f "$composeFilePath" down | Out-Null
+$daemonScript = Join-Path $daemonDir "daemon.js"
 
+Write-Host "✔ Auto-Update-Daemon gefunden."
 
-# -------------------------------------------------------------
-# 7. Docker starten
-# -------------------------------------------------------------
-Write-Host "⬇Lade aktuelles Image..."
-docker compose -f "$composeFilePath" pull
-
-Write-Host "Starte Dashboard..."
-docker compose -f "$composeFilePath" up -d
-
-Start-Sleep 10
-
-
-# -------------------------------------------------------------
-# 8. HTTP-Test
-# -------------------------------------------------------------
-Write-Host "pruefe Dashboard..."
-
-$uri = "http://localhost:$port/"
-
-try {
-    Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 10 | Out-Null
-    Write-Host "Dashboard erfolgreich gestartet!" -ForegroundColor Green
-} catch {
-    Write-Host "Dashboard läuft, aber HTTP-Test fehlgeschlagen." -ForegroundColor Yellow
+# -----------------------------------------
+# NODE PRÜFEN
+# -----------------------------------------
+if (!(Test-Path $NodePath)) {
+    Write-Host "❌ Node.js wurde nicht gefunden unter:"
+    Write-Host "   $NodePath"
+    Write-Host "Bitte Node LTS installieren!"
+    exit 1
 }
 
+Write-Host "✔ Node gefunden."
 
-# -------------------------------------------------------------
-# 9. Auto-Update Task
-# -------------------------------------------------------------
-Write-Host "Installiere Auto-Update Daemon..."
+# -----------------------------------------
+# NSSM INSTALLIEREN
+# -----------------------------------------
+$nssm = Join-Path $InstallRoot "nssm.exe"
 
-if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+if (!(Test-Path $nssm)) {
+    Write-Host "📥 Lade NSSM herunter..."
+    Invoke-WebRequest "https://nssm.cc/release/nssm-2.24.zip" -OutFile "$InstallRoot\nssm.zip"
+    [System.IO.Compression.ZipFile]::ExtractToDirectory("$InstallRoot\nssm.zip", $InstallRoot, $true)
+
+    Copy-Item "$InstallRoot\nssm-2.24\win64\nssm.exe" -Destination $nssm
+    Remove-Item "$InstallRoot\nssm-2.24" -Recurse -Force
+    Remove-Item "$InstallRoot\nssm.zip"
 }
 
-$action = New-ScheduledTaskAction -Execute "node.exe" -Argument "$TargetDaemon\daemon.js"
-$trigger = New-ScheduledTaskTrigger -AtStartup
+Write-Host "✔ NSSM bereit."
 
-Register-ScheduledTask `
-    -TaskName $TaskName `
-    -Action $action `
-    -Trigger $trigger `
-    -RunLevel Highest `
-    -Force | Out-Null
+# -----------------------------------------
+# WINDOWS SERVICE INSTALLIEREN
+# -----------------------------------------
+Write-Host "⚙ Installiere Windows Service 'CustomerDashboardDaemon'..."
 
-Write-Host "Auto-Update Daemon installiert."
+& $nssm install "CustomerDashboardDaemon" $NodePath $daemonScript
+& $nssm set "CustomerDashboardDaemon" AppDirectory $daemonDir
+& $nssm set "CustomerDashboardDaemon" DisplayName "Customer Dashboard Updater"
+& $nssm set "CustomerDashboardDaemon" Description "Automatischer Update-Daemon für das Customer Dashboard"
+& $nssm set "CustomerDashboardDaemon" Start SERVICE_AUTO_START
 
+& $nssm start "CustomerDashboardDaemon"
 
-# -------------------------------------------------------------
-# 10. Fertig
-# -------------------------------------------------------------
-Write-Host "`nINSTALLATION ABGESCHLOSSEN!" -ForegroundColor Green
-Write-Host "Dashboard: http://localhost:$port/"
-Write-Host "Auto-Update: $TaskName"
-Write-Host "Logs: $LogDir"
+Write-Host ""
+Write-Host "✔ Auto-Update-Daemon als Service installiert und gestartet."
+
+# -----------------------------------------
+# FERTIG
+# -----------------------------------------
+Write-Host ""
+Write-Host "🎉 Installation abgeschlossen!"
+Write-Host "Das Dashboard aktualisiert sich jetzt automatisch alle 5 Minuten."
+Write-Host "Logs unter: $InstallRoot\logs\daemon.log"
