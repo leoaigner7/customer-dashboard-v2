@@ -1,31 +1,32 @@
+const express = require("express");
+const router = express.Router();
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const { db } = require("./db.js");
 
-const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_PLEASE";
-
+// -----------------------------------------
+// Token erstellen
+// -----------------------------------------
 function signUser(user) {
   return jwt.sign(
     { id: user.id, email: user.email, role: user.role },
-    JWT_SECRET,
-    { expiresIn: "8h" }
+    process.env.JWT_SECRET || "default_secret",
+    { expiresIn: "7d" }
   );
 }
 
-function authMiddleware(requiredRole = null) {
+// -----------------------------------------
+// Middleware für geschützte Routen
+// -----------------------------------------
+function authMiddleware() {
   return (req, res, next) => {
     const header = req.headers.authorization;
-    if (!header?.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+    if (!header) return res.status(401).json({ error: "Missing token" });
 
-    const token = header.slice(7);
+    const token = header.split(" ")[1];
     try {
-      const payload = jwt.verify(token, JWT_SECRET);
-      if (requiredRole && payload.role !== requiredRole) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
-      req.user = payload;
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || "default_secret");
+      req.user = decoded;
       next();
     } catch (e) {
       return res.status(401).json({ error: "Invalid token" });
@@ -33,27 +34,50 @@ function authMiddleware(requiredRole = null) {
   };
 }
 
-async function seedAdmin() {
-  const adminEmail = "admin@example.com";
-
-  const existing = db
-    .prepare("SELECT * FROM users WHERE email = ?")
-    .get(adminEmail);
-
-  if (!existing) {
-    const hash = await bcrypt.hash("admin123", 10);
+// -----------------------------------------
+// Admin-Benutzer automatisch erstellen
+// -----------------------------------------
+function seedAdmin() {
+  const admin = db.prepare("SELECT * FROM users WHERE email = ?").get("admin@example.com");
+  if (!admin) {
+    const hash = bcrypt.hashSync("admin123", 10);
     db.prepare(
       "INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)"
-    ).run(adminEmail, hash, "admin");
-
-    console.log(
-      "Admin-User erstellt: admin@example.com / admin123 (bitte in Settings ändern)"
-    );
+    ).run("admin@example.com", hash, "admin");
+    console.log("[INIT] Admin erstellt: admin@example.com / admin123");
   }
 }
 
-module.exports = {
-  signUser,
-  authMiddleware,
-  seedAdmin,
-};
+seedAdmin();
+
+// -----------------------------------------
+// LOGIN ROUTE
+// -----------------------------------------
+router.post("/login", (req, res) => {
+  const { email, password } = req.body;
+
+  const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+
+  if (!user) return res.status(401).json({ error: "Invalid credentials" });
+
+  const valid = bcrypt.compareSync(password, user.password_hash);
+  if (!valid) return res.status(401).json({ error: "Invalid credentials" });
+
+  const token = signUser(user);
+  res.json({ token });
+});
+
+// -----------------------------------------
+// CURRENT USER / TOKEN CHECK
+// -----------------------------------------
+router.get("/me", authMiddleware(), (req, res) => {
+  res.json({ user: req.user });
+});
+
+// -----------------------------------------
+// EXPORT: Router (für server.js) + Funktionen (falls benötigt)
+// -----------------------------------------
+module.exports = router;
+module.exports.signUser = signUser;
+module.exports.authMiddleware = authMiddleware;
+module.exports.seedAdmin = seedAdmin;
