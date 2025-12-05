@@ -1,38 +1,17 @@
-import express from "express";
-import { db } from "../db.js";
-import { authMiddleware } from "../auth.js";
+const express = require("express");
+const router = express.Router();
+const { db } = require("../db");
 
-export function createDashboardRouter() {
-  const router = express.Router();
+// Beispiel: Dashboard-Daten
+router.get("/", (req, res) => {
+  const logs = db.prepare("SELECT COUNT(*) as logCount FROM logs").get();
+  const users = db.prepare("SELECT COUNT(*) as userCount FROM users").get();
 
-  router.get("/widgets", authMiddleware(), (_req, res) => {
-    const totalLogs = db
-      .prepare("SELECT COUNT(*) AS count FROM logs")
-      .get().count;
-
-    const recentLogs = db
-      .prepare(
-        "SELECT level, message, created_at FROM logs ORDER BY created_at DESC LIMIT 5"
-      )
-      .all();
-
-    const chartData = [
-      { label: "Mo", value: 120 },
-      { label: "Di", value: 150 },
-      { label: "Mi", value: 90 },
-      { label: "Do", value: 200 },
-      { label: "Fr", value: 180 }
-    ];
-
-    res.json({
-      cards: [
-        { id: "logs_count", title: "Log-Einträge", value: totalLogs },
-        { id: "uptime", title: "System Uptime", value: "99.98 %" }
-      ],
-      recentLogs,
-      chartData
-    });
+  res.json({
+    users: users.userCount,
+    logs: logs.logCount,
+    status: "ok"
   });
+});
 
-  return router;
-}
+module.exports = router;

@@ -1,26 +1,19 @@
-import express from "express";
-import { db }  from "../db.js";
-import { authMiddleware } from "../auth.js";
+const express = require("express");
+const router = express.Router();
+const { db } = require("../db");
 
-export function createSettingsRouter() {
-  const router = express.Router();
+router.get("/", (req, res) => {
+  const settings = db.prepare("SELECT * FROM settings WHERE id = 1").get();
+  res.json(settings);
+});
 
-  router.get("/", authMiddleware(), (_req, res) => {
-    const settings = db
-      .prepare("SELECT theme, language FROM settings WHERE id = 1")
-      .get();
-    res.json(settings);
-  });
+router.post("/", (req, res) => {
+  const { theme, language } = req.body;
 
-  router.put("/", authMiddleware(), (req, res) => {
-    const { theme, language } = req.body;
-    db.prepare(
-      "UPDATE settings SET theme = ?, language = ? WHERE id = 1"
-    ).run(theme ?? "light", language ?? "de");
-    res.json({ ok: true });
-  });
+  db.prepare("UPDATE settings SET theme = ?, language = ? WHERE id = 1")
+    .run(theme, language);
 
-  return router;
-}
+  res.json({ success: true });
+});
 
-
+module.exports = router;

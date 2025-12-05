@@ -2,11 +2,25 @@ const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const { db } = require("./db.js");
+const { db } = require("./db");
 
-// -----------------------------------------
-// Token erzeugen
-// -----------------------------------------
+// ===== Admin erzeugen =====
+function seedAdmin() {
+  const admin = db.prepare("SELECT * FROM users WHERE email = ?").get("admin@example.com");
+
+  if (!admin) {
+    const hash = bcrypt.hashSync("admin123", 10);
+    db.prepare(
+      "INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)"
+    ).run("admin@example.com", hash, "admin");
+
+    console.log("[INIT] Admin erstellt: admin@example.com / admin123");
+  }
+}
+
+seedAdmin();
+
+// ===== Token =====
 function signUser(user) {
   return jwt.sign(
     { id: user.id, email: user.email, role: user.role },
@@ -15,9 +29,7 @@ function signUser(user) {
   );
 }
 
-// -----------------------------------------
-// Middleware für geschützte Routen
-// -----------------------------------------
+// ===== Middleware =====
 function authMiddleware() {
   return (req, res, next) => {
     const header = req.headers.authorization;
@@ -35,26 +47,7 @@ function authMiddleware() {
   };
 }
 
-// -----------------------------------------
-// Admin erzeugen
-// -----------------------------------------
-function seedAdmin() {
-  const admin = db.prepare("SELECT * FROM users WHERE email = ?").get("admin@example.com");
-  if (!admin) {
-    const hash = bcrypt.hashSync("admin123", 10);
-    db.prepare(
-      "INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)"
-    ).run("admin@example.com", hash, "admin");
-
-    console.log("[INIT] Admin erstellt: admin@example.com / admin123");
-  }
-}
-
-seedAdmin();
-
-// -----------------------------------------
-// LOGIN-ROUTE
-// -----------------------------------------
+// ===== ROUTES =====
 router.post("/login", (req, res) => {
   const { email, password } = req.body;
 
@@ -64,23 +57,16 @@ router.post("/login", (req, res) => {
   const valid = bcrypt.compareSync(password, user.password_hash);
   if (!valid) return res.status(401).json({ error: "Invalid credentials" });
 
-  const token = signUser(user);
-  res.json({ token });
+  return res.json({ token: signUser(user) });
 });
 
-// -----------------------------------------
-// CURRENT USER
-// -----------------------------------------
 router.get("/me", authMiddleware(), (req, res) => {
   res.json({ user: req.user });
 });
 
-// -----------------------------------------
-// EXPORTS
-// -----------------------------------------
 module.exports = {
   router,
   signUser,
   authMiddleware,
-  seedAdmin,
+  seedAdmin
 };

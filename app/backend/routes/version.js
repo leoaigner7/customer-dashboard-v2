@@ -1,26 +1,17 @@
 const express = require("express");
-const fs = require("fs");
-const path = require("path");
-
 const router = express.Router();
+const path = require("path");
+const fs = require("fs");
 
 router.get("/", (req, res) => {
-  try {
-    const envPath = path.join(__dirname, "../.env");
+  const versionFile = path.join(__dirname, "..", "..", "VERSION.txt");
 
-    if (!fs.existsSync(envPath)) {
-      return res.json({ version: "unknown" });
-    }
-
-    const envContent = fs.readFileSync(envPath, "utf8");
-    const match = envContent.match(/^APP_VERSION\s*=\s*(.+)$/m);
-    const version = match ? match[1].trim() : "unknown";
-
-    res.json({ version });
-  } catch (err) {
-    console.error("VERSION API ERROR:", err);
-    res.json({ version: "unknown" });
+  if (!fs.existsSync(versionFile)) {
+    return res.json({ version: "unknown" });
   }
+
+  const version = fs.readFileSync(versionFile, "utf8").trim();
+  res.json({ version });
 });
 
 module.exports = router;

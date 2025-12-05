@@ -1,43 +1,22 @@
-import express from "express";
-import bcrypt from "bcryptjs";
-import { db } from "../db.js";
-import { authMiddleware, signUser } from "../auth.js";
+const express = require("express");
+const router = express.Router();
+const bcrypt = require("bcryptjs");
+const { db } = require("../db");
 
-export function createUserRouter() {
-  const router = express.Router();
+router.get("/", (req, res) => {
+  const users = db.prepare("SELECT id, email, role FROM users").all();
+  res.json(users);
+});
 
-  router.post("/login", async (req, res) => {
-    const { email, password } = req.body;
+router.post("/", (req, res) => {
+  const { email, password, role } = req.body;
 
-    const user = db
-      .prepare("SELECT * FROM users WHERE email = ?")
-      .get(email);
-    if (!user) return res.status(401).json({ error: "Invalid credentials" });
+  const hash = bcrypt.hashSync(password, 10);
 
-    const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+  db.prepare("INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)")
+    .run(email, hash, role);
 
-    const token = signUser(user);
+  res.json({ success: true });
+});
 
-    res.json({
-      token,
-      user: { id: user.id, email: user.email, role: user.role }
-    });
-  });
-
-  router.get("/me", authMiddleware(), (req, res) => {
-    const user = db
-      .prepare("SELECT id, email, role FROM users WHERE id = ?")
-      .get(req.user.id);
-    res.json(user);
-  });
-
-  router.get("/", authMiddleware("admin"), (_req, res) => {
-    const users = db
-      .prepare("SELECT id, email, role FROM users")
-      .all();
-    res.json(users);
-  });
-
-  return router;
-}
+module.exports = router;

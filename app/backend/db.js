@@ -1,16 +1,15 @@
-import Database from "better-sqlite3";
-import path from "path";
-import { fileURLToPath } from "url";
+const path = require("path");
+const Database = require("better-sqlite3");
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+// __dirname in CommonJS ist vorhanden, kein import.meta.url nötig
 const dbPath = path.join(__dirname, "..", "..", "data.db");
 
-export const db = new Database(dbPath);
+const db = new Database(dbPath);
 
+// WAL-Modus aktivieren
 db.pragma("journal_mode = WAL");
 
+// Tabellen initialisieren
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,3 +33,5 @@ CREATE TABLE IF NOT EXISTS settings (
 
 INSERT OR IGNORE INTO settings(id, theme, language) VALUES (1, 'light', 'de');
 `);
+
+module.exports = { db };
