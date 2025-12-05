@@ -31,11 +31,11 @@
   "sources": {
     "github": {
       "enabled": true,
-      "apiUrl": "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest",
-      "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}"
+      "apiUrl": "https://api.github.com/repos/DEINEORG/customer-dashboard-v2/releases/latest",
+      "imageTemplate": "ghcr.io/DEINEORG/customer-dashboard-v2:{version}"
     },
     "offlineZip": {
-      "enabled": false,
+      "enabled": true,
       "zipPath": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip",
       "hashFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sha256",
       "signatureFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sig",
@@ -49,9 +49,9 @@
   },
 
   "security": {
-    "requireHash": false,
+    "requireHash": true,
     "requireSignature": false,
-    "publicKeyFile": ""
+    "publicKeyFile": "C:\\CustomerDashboard\\keys\\public.pem"
   },
 
   "selfUpdate": {
