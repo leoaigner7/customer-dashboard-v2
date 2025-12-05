@@ -10,7 +10,7 @@ app.use(express.json());
 // === API ROUTES ===
 
 // AUTHENTIFIZIERUNG
-const authRoute = require("./routes/auth");
+const authRoute = require("./auth");
 app.use("/api/auth", authRoute);
 
 // DASHBOARD-DATEN
