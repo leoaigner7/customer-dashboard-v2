@@ -5,7 +5,7 @@ const bcrypt = require("bcryptjs");
 const { db } = require("./db.js");
 
 // -----------------------------------------
-// Token erstellen
+// Token erzeugen
 // -----------------------------------------
 function signUser(user) {
   return jwt.sign(
@@ -24,6 +24,7 @@ function authMiddleware() {
     if (!header) return res.status(401).json({ error: "Missing token" });
 
     const token = header.split(" ")[1];
+
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || "default_secret");
       req.user = decoded;
@@ -35,7 +36,7 @@ function authMiddleware() {
 }
 
 // -----------------------------------------
-// Admin-Benutzer automatisch erstellen
+// Admin erzeugen
 // -----------------------------------------
 function seedAdmin() {
   const admin = db.prepare("SELECT * FROM users WHERE email = ?").get("admin@example.com");
@@ -44,6 +45,7 @@ function seedAdmin() {
     db.prepare(
       "INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)"
     ).run("admin@example.com", hash, "admin");
+
     console.log("[INIT] Admin erstellt: admin@example.com / admin123");
   }
 }
@@ -51,13 +53,12 @@ function seedAdmin() {
 seedAdmin();
 
 // -----------------------------------------
-// LOGIN ROUTE
+// LOGIN-ROUTE
 // -----------------------------------------
 router.post("/login", (req, res) => {
   const { email, password } = req.body;
 
   const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
-
   if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
   const valid = bcrypt.compareSync(password, user.password_hash);
@@ -68,16 +69,18 @@ router.post("/login", (req, res) => {
 });
 
 // -----------------------------------------
-// CURRENT USER / TOKEN CHECK
+// CURRENT USER
 // -----------------------------------------
 router.get("/me", authMiddleware(), (req, res) => {
   res.json({ user: req.user });
 });
 
 // -----------------------------------------
-// EXPORT: Router (für server.js) + Funktionen (falls benötigt)
+// EXPORTS
 // -----------------------------------------
-module.exports = router;
-module.exports.signUser = signUser;
-module.exports.authMiddleware = authMiddleware;
-module.exports.seedAdmin = seedAdmin;
+module.exports = {
+  router,
+  signUser,
+  authMiddleware,
+  seedAdmin,
+};
