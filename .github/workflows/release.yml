@@ -29,8 +29,10 @@ jobs:
         with:
           node-version: 20
 
+      # ===========================
       # FRONTEND BUILD
-   
+      # ===========================
+
       - name: Install frontend deps
         working-directory: app/frontend
         run: npm ci || npm install
@@ -39,16 +41,18 @@ jobs:
         working-directory: app/frontend
         run: npm run build
 
-   
+      # ===========================
       # BACKEND DEPS
+      # ===========================
 
       - name: Install backend deps
         working-directory: app/backend
         run: npm ci || npm install
 
-
+      # ===========================
       # DOCKER BUILD
- 
+      # ===========================
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -63,9 +67,10 @@ jobs:
             -t $REGISTRY/${IMAGE_NAME}:$VERSION \
             -t $REGISTRY/${IMAGE_NAME}:latest .
 
-      
+      # ===========================
       # TEST IMAGE
-      
+      # ===========================
+
       - name: Test Docker Image
         run: |
           docker run -d -p 8088:3000 --name cd-test $REGISTRY/${IMAGE_NAME}:$VERSION
@@ -87,40 +92,58 @@ jobs:
 
           docker logs cd-test
           docker stop cd-test
+          docker rm cd-test
 
-      
+      # ===========================
       # PUSH IMAGE
-      
+      # ===========================
+
       - name: Push Docker Images
         run: |
           docker push $REGISTRY/${IMAGE_NAME}:$VERSION
           docker push $REGISTRY/${IMAGE_NAME}:latest
 
-      
+      # ===========================
       # CREATE CUSTOMER ZIP
-      
+      # ===========================
+
       - name: Create customer package
         run: |
           mkdir -p package/deploy
           mkdir -p package/system-daemon
 
+          # Deploy-Skripte
           cp deploy/docker-compose.yml package/deploy/
           cp deploy/install.ps1 package/deploy/
           cp deploy/install.sh package/deploy/
           cp deploy/.env.example package/deploy/.env
           echo "APP_VERSION=$VERSION" >> package/deploy/.env
 
+          # System-Daemon komplett
           cp -r system-daemon/* package/system-daemon/
 
+          # Doku / Meta
           cp README.md package/
           echo "$VERSION" > package/VERSION.txt
 
           cd package
           zip -r ../customer-dashboard-v2-$VERSION.zip .
-      
-        # RELEASE
-      
+
+      # ===========================
+      # HASH-FILE ERZEUGEN
+      # ===========================
+
+      - name: Create SHA256 checksum
+        run: |
+          sha256sum customer-dashboard-v2-$VERSION.zip > customer-dashboard-v2-$VERSION.zip.sha256
+
+      # ===========================
+      # GITHUB RELEASE
+      # ===========================
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: customer-dashboard-v2-${{ env.VERSION }}.zip
+          files: |
+            customer-dashboard-v2-${{ env.VERSION }}.zip
+            customer-dashboard-v2-${{ env.VERSION }}.zip.sha256
