@@ -9,6 +9,7 @@ const logsRouter = require("./routes/logs");
 const settingsRouter = require("./routes/settings");
 const usersRouter = require("./routes/users");
 const statusRouter = require("./routes/status"); // NEU
+const versionRouter = require("./routes/version");
 
 const app = express();
 
@@ -23,6 +24,7 @@ app.use("/api/logs", logsRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/status", statusRouter); // NEU
+app.use("/api/version", versionRouter);
 
 // Default healthcheck
 app.get("/api/health", (req, res) => {
