@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository_owner }}/customer-dashboard-v2
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # FRONTEND BUILD
+   
+      - name: Install frontend deps
+        working-directory: app/frontend
+        run: npm ci || npm install
+
+      - name: Build frontend
+        working-directory: app/frontend
+        run: npm run build
+
+   
+      # BACKEND DEPS
+
+      - name: Install backend deps
+        working-directory: app/backend
+        run: npm ci || npm install
+
+
+      # DOCKER BUILD
+ 
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker Image
+        run: |
+          docker build \
+            --build-arg VERSION=$VERSION \
+            -t $REGISTRY/${IMAGE_NAME}:$VERSION \
+            -t $REGISTRY/${IMAGE_NAME}:latest .
+
+      
+      # TEST IMAGE
+      
+      - name: Test Docker Image
+        run: |
+          docker run -d -p 8088:3000 --name cd-test $REGISTRY/${IMAGE_NAME}:$VERSION
+
+          echo "Waiting for container to be ready..."
+          for i in {1..15}; do
+            sleep 2
+            if curl -f http://localhost:8088/api/version >/dev/null 2>&1; then
+              echo "Container is ready!"
+              break
+            fi
+            echo "Still waiting..."
+            if [ $i -eq 15 ]; then
+              echo "Container did not start."
+              docker logs cd-test
+              exit 1
+            fi
+          done
+
+          docker logs cd-test
+          docker stop cd-test
+
+      
+      # PUSH IMAGE
+      
+      - name: Push Docker Images
+        run: |
+          docker push $REGISTRY/${IMAGE_NAME}:$VERSION
+          docker push $REGISTRY/${IMAGE_NAME}:latest
+
+      
+      # CREATE CUSTOMER ZIP
+      
+      - name: Create customer package
+        run: |
+          mkdir -p package/deploy
+          mkdir -p package/system-daemon
+
+          cp deploy/docker-compose.yml package/deploy/
+          cp deploy/install.ps1 package/deploy/
+          cp deploy/install.sh package/deploy/
+          cp deploy/.env.example package/deploy/.env
+          echo "APP_VERSION=$VERSION" >> package/deploy/.env
+
+          cp -r system-daemon/* package/system-daemon/
+
+          cp README.md package/
+          echo "$VERSION" > package/VERSION.txt
+
+          cd package
+          zip -r ../customer-dashboard-v2-$VERSION.zip .
+      
+        # RELEASE
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: customer-dashboard-v2-${{ env.VERSION }}.zip
