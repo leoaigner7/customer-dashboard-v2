@@ -42,7 +42,7 @@ app.get("*", (req, res) => {
 });
 
 // Start server
-const PORT = process.env.PORT || process.env.APP_PORT || 3000;
-app.listen(PORT, () => {
+const PORT =  3000;
+app.listen(3000, () => {
   console.log(`Backend läuft auf Port ${PORT}`);
 });
