@@ -121,6 +121,7 @@ jobs:
 
           # System-Daemon komplett
           cp -r system-daemon/* package/system-daemon/
+          cp system-daemon/config.json package/system-daemon/config.json
 
           # Doku / Meta
           cp README.md package/

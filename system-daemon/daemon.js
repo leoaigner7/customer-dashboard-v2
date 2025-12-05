@@ -28,10 +28,11 @@ function log(level, message, extra) {
   target.log(level, message, config, extra);
 }
 
-// Statusfile-Pfad
+const installRoot = (config.paths && config.paths.installRoot) || "C:\\CustomerDashboard";
 const STATUS_FILE =
   (config.paths && config.paths.statusFile) ||
-  path.join(config.paths.installRoot || "C:\\CustomerDashboard", "logs", "update-status.json");
+  path.join(installRoot, "logs", "update-status.json");
+
 
 // -------------------------
 // Hilfsfunktionen
