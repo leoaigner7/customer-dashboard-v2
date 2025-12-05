@@ -16,7 +16,6 @@ package-lock.json
 # Environment
 *.env
 deploy/.env
-system-daemon/config.json
 
 # IDE
 .idea/
