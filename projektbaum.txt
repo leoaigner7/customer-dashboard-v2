@@ -1,4 +1,4 @@
-Auflistung der Ordnerpfade für Volume Windows
+Auflistung der Ordnerpfade fï¿½r Volume Windows
 Volumeseriennummer : 0EA6-1EC9
 C:.
 |   .dockerignore
