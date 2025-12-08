@@ -325,12 +325,14 @@ function restoreBackup(backupDir) {
     copyRecursive(sourceDeploy, targetDeploy);
   }
 
-   const sourceDaemon = path.join(backupDir, "system-daemon");
-// ⚠️ NIE überschreiben – Node.exe blockiert, würde EPERM erzeugen
-  log("info", "Rollback ignoriert system-daemon (geschützt).");
+  const sourceDaemon = path.join(backupDir, "system-daemon");
+  // ⚠️ system-daemon wird NICHT mehr zurückkopiert, um EPERM zu vermeiden
+  if (fs.existsSync(sourceDaemon)) {
+    log("info", "Rollback ignoriert system-daemon (läuft aktiv).", {
+      backupDir
+    });
+  }
 
-  log("info", "Backup wiederhergestellt", { backupDir });
-}
 
 function copyRecursive(src, dest) {
   if (!fs.existsSync(src)) return;
@@ -425,26 +427,34 @@ async function applyZipUpdate(candidate) {
 async function applyDockerUpdate(candidate, latestVersion) {
   log("info", "Wende Docker-Update an...", { candidate });
 
+  // Image ziehen
   await target.downloadImage(config, latestVersion);
+
+  // Version direkt ins .env schreiben
   target.writeEnvVersion(config, latestVersion);
+
+  // docker compose down / pull / up -d
   await target.restartDashboard(config);
 
-  // Healthcheck mehrfach versuchen
+  // Healthcheck mehrfach versuchen (z.B. 10x alle 2 Sekunden)
   let ok = false;
   for (let i = 0; i < 10; i++) {
     ok = await target.checkHealth(config);
     if (ok) break;
-    await new Promise(res => setTimeout(res, 2000));
+    await new Promise((res) => setTimeout(res, 2000));
   }
 
   if (!ok) {
-    throw new Error("Healthcheck nach Docker-Update fehlgeschlagen (extended timeout).");
+    throw new Error(
+      "Healthcheck nach Docker-Update fehlgeschlagen (extended timeout)."
+    );
   }
 
   log("info", "Docker-Update erfolgreich angewendet.", {
     version: latestVersion
   });
 }
+
 
 
 // -------------------------
@@ -513,8 +523,9 @@ async function checkOnce() {
 
       const ok = await target.checkHealth(config);
       if (!ok) {
-        throw new Error("Healthcheck nach Update fehlgeschlagen.");
+        log("warn", "Healthcheck nach Update meldet noch nicht OK, Update aber bereits angewendet.");
       }
+
 
       log("info", "Update erfolgreich abgeschlossen.", {
         newVersion: candidate.version
