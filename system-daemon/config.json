@@ -31,8 +31,8 @@
   "sources": {
     "github": {
       "enabled": true,
-      "apiUrl": "https://api.github.com/repos/DEINEORG/customer-dashboard-v2/releases/latest",
-      "imageTemplate": "ghcr.io/DEINEORG/customer-dashboard-v2:{version}"
+      "apiUrl": "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest",
+      "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}"
     },
     "offlineZip": {
       "enabled": true,
