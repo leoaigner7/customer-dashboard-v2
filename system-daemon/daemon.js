@@ -325,12 +325,9 @@ function restoreBackup(backupDir) {
     copyRecursive(sourceDeploy, targetDeploy);
   }
 
-  const sourceDaemon = path.join(backupDir, "system-daemon");
-  const targetDaemon = path.join(root, "system-daemon");
-  if (fs.existsSync(sourceDaemon)) {
-    fs.rmSync(targetDaemon, { recursive: true, force: true });
-    copyRecursive(sourceDaemon, targetDaemon);
-  }
+   const sourceDaemon = path.join(backupDir, "system-daemon");
+// ⚠️ NIE überschreiben – Node.exe blockiert, würde EPERM erzeugen
+  log("info", "Rollback ignoriert system-daemon (geschützt).");
 
   log("info", "Backup wiederhergestellt", { backupDir });
 }
@@ -432,15 +429,23 @@ async function applyDockerUpdate(candidate, latestVersion) {
   target.writeEnvVersion(config, latestVersion);
   await target.restartDashboard(config);
 
-  const ok = await target.checkHealth(config);
+  // Healthcheck mehrfach versuchen
+  let ok = false;
+  for (let i = 0; i < 10; i++) {
+    ok = await target.checkHealth(config);
+    if (ok) break;
+    await new Promise(res => setTimeout(res, 2000));
+  }
+
   if (!ok) {
-    throw new Error("Healthcheck nach Docker-Update fehlgeschlagen.");
+    throw new Error("Healthcheck nach Docker-Update fehlgeschlagen (extended timeout).");
   }
 
   log("info", "Docker-Update erfolgreich angewendet.", {
     version: latestVersion
   });
 }
+
 
 // -------------------------
 // Haupt-Update-Check
