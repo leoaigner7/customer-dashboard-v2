@@ -1,0 +1,11 @@
+services:
+  dashboard:
+    image: ghcr.io/leoaigner7/customer-dashboard-v2:${APP_VERSION}
+    env_file: .env
+    ports:
+      - "${APP_PORT:-8080}:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 15s
+      retries: 3

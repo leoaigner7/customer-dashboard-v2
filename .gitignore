@@ -1,0 +1,30 @@
+# Dependencies
+app/frontend/node_modules/
+app/backend/node_modules/
+
+# Build Output
+app/frontend/dist/
+app/backend/dist/
+dist/
+build/
+
+# Lock files
+app/frontend/package-lock.json
+app/backend/package-lock.json
+package-lock.json
+
+# Environment
+*.env
+deploy/.env
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
