@@ -332,6 +332,7 @@ function restoreBackup(backupDir) {
       backupDir
     });
   }
+}
 
 
 function copyRecursive(src, dest) {
