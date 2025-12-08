@@ -4,6 +4,9 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 
+// AUTH — bleibt an Ort & Stelle
+const { handleLogin, authMiddleware } = require("./auth");
+
 // ROUTES
 const dashboardRouter = require("./routes/dashboard");
 const logsRouter = require("./routes/logs");
@@ -17,6 +20,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// ----------------------------
+// AUTH ROUTE (NEU!!!)
+// ----------------------------
+app.post("/api/auth/login", handleLogin);
+
+// Optional — Token-Check für private APIs:
+// app.use("/api/*", authMiddleware());
 
 // ----------------------------
 // API ROUTES
@@ -34,20 +45,20 @@ app.get("/api/health", (req, res) => {
 });
 
 // ----------------------------
-// STATIC REACT BUILD (IMPORTANT: BEFORE wildcard route!)
+// STATIC REACT BUILD
 // ----------------------------
 const publicPath = path.join(__dirname, "public");
 app.use(express.static(publicPath));
 
 // ----------------------------
-// SPA FALLBACK (MUST BE LAST ROUTE)
+// SPA FALLBACK
 // ----------------------------
 app.get("*", (req, res) => {
   res.sendFile(path.join(publicPath, "index.html"));
 });
 
 // ----------------------------
-// SERVER STARTS ON PORT 3000
+// SERVER START
 // ----------------------------
 const PORT = 3000;
 app.listen(PORT, () => {

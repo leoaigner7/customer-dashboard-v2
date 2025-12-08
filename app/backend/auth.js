@@ -42,7 +42,7 @@ function authMiddleware(requiredRole = null) {
   };
 }
 
-// Login-Handler
+// LOGIN ENDPOINT — wird jetzt in server.js eingebunden
 async function handleLogin(req, res) {
   const { email, password } = req.body;
 
@@ -70,12 +70,15 @@ async function handleLogin(req, res) {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: "Login fehlgeschlagen", detail: err.message });
+    res.status(500).json({
+      error: "Login fehlgeschlagen",
+      detail: err.message,
+    });
   }
 }
 
 module.exports = {
-  signUser,
-  authMiddleware,
   handleLogin,
+  authMiddleware,
+  signUser,
 };
