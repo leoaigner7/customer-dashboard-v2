@@ -169,14 +169,18 @@ $action = New-ScheduledTaskAction `
     -Argument "`"$daemonPath`"" `
     -WorkingDirectory $workingDir
 
-# TRIGGER 1: beim Booten
+# TRIGGER beim Booten
 $triggerBoot = New-ScheduledTaskTrigger -AtStartup
 
-# TRIGGER 2: Wiederholender Task alle 5 Minuten
+# TRIGGER alle 5 Minuten (gültige Duration!)
 $startTime = (Get-Date).AddMinutes(1).ToString("HH:mm")
-$triggerRepeat = New-ScheduledTaskTrigger -Once -At $startTime `
+$duration = (New-TimeSpan -Days 3650)  # 10 Jahre gültig
+
+$triggerRepeat = New-ScheduledTaskTrigger `
+    -Once `
+    -At $startTime `
     -RepetitionInterval (New-TimeSpan -Minutes 5) `
-    -RepetitionDuration ([TimeSpan]::MaxValue)
+    -RepetitionDuration $duration
 
 # TASK REGISTRIEREN (SYSTEM)
 Register-ScheduledTask `
@@ -187,6 +191,7 @@ Register-ScheduledTask `
     -User "SYSTEM"
 
 Write-Host "Auto-Update Daemon installiert (SYSTEM Task)."
+
 
 
 
