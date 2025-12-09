@@ -28,11 +28,11 @@ function log(level, message, extra) {
   target.log(level, message, config, extra);
 }
 
-const installRoot = (config.paths && config.paths.installRoot) || "C:\\CustomerDashboard";
+const installRoot =
+  (config.paths && config.paths.installRoot) || "C:\\CustomerDashboard";
 const STATUS_FILE =
   (config.paths && config.paths.statusFile) ||
   path.join(installRoot, "logs", "update-status.json");
-
 
 // -------------------------
 // Hilfsfunktionen
@@ -87,7 +87,6 @@ async function getGithubCandidate() {
       headers: { "User-Agent": "customer-dashboard-daemon" }
     });
 
-    // Vereinfachte Annahme: GitHub Release API
     const tag =
       res.data.tag_name ||
       res.data.name ||
@@ -129,7 +128,6 @@ async function getOfflineZipCandidate() {
 
   let version = src.version || null;
 
-  // Optional: VERSION.txt aus dem ZIP lesen
   if (!version) {
     try {
       const zip = new AdmZip(src.zipPath);
@@ -203,7 +201,6 @@ async function resolveLatestCandidate(currentVersion) {
 
   if (candidates.length === 0) return null;
 
-  // Policy: pinnedVersion
   const pinned = config.policy && config.policy.pinnedVersion;
 
   let best = null;
@@ -211,7 +208,6 @@ async function resolveLatestCandidate(currentVersion) {
     let v = c.version || null;
 
     if (pinned && v && v !== pinned) {
-      // Candidate ignorieren, wenn wir auf bestimmte Version pinnen
       continue;
     }
 
@@ -228,7 +224,6 @@ async function resolveLatestCandidate(currentVersion) {
 
   if (!best) return null;
 
-  // Downgrade-Policy
   if (
     currentVersion &&
     best.version &&
@@ -266,6 +261,19 @@ function cleanupOldBackups(backupDir, keep) {
   }
 }
 
+function copyRecursive(src, dest) {
+  if (!fs.existsSync(src)) return;
+  const stat = fs.statSync(src);
+  if (stat.isDirectory()) {
+    fs.mkdirSync(dest, { recursive: true });
+    for (const entry of fs.readdirSync(src)) {
+      copyRecursive(path.join(src, entry), path.join(dest, entry));
+    }
+  } else {
+    fs.copyFileSync(src, dest);
+  }
+}
+
 function createBackup() {
   if (!config.backup || !config.backup.enabled) {
     log("debug", "Backups sind deaktiviert.");
@@ -284,15 +292,12 @@ function createBackup() {
 
   fs.mkdirSync(backupDir, { recursive: true });
 
-  // Einfach: kompletten deploy-Ordner sichern
   const sourceDeploy = path.join(root, "deploy");
   const targetDeploy = path.join(backupDir, "deploy");
 
   if (fs.existsSync(sourceDeploy)) {
     copyRecursive(sourceDeploy, targetDeploy);
   }
-
-  // Option: system-daemon sichern
 
   const keep = config.backup.keep || 5;
   cleanupOldBackups(backupRoot, keep);
@@ -316,30 +321,20 @@ function restoreBackup(backupDir) {
   const sourceDeploy = path.join(backupDir, "deploy");
   const targetDeploy = path.join(root, "deploy");
 
-// Deploy löschen – aber niemals system-daemon anfassen!
-if (fs.existsSync(targetDeploy)) {
-    fs.rmSync(targetDeploy, { recursive: true, force: true });
-}
-
-// Nur den Deploy-Ordner wiederherstellen, sonst NICHTS
-if (fs.existsSync(sourceDeploy)) {
-    copyRecursive(sourceDeploy, targetDeploy);
-
-}
-}
-
-
-function copyRecursive(src, dest) {
-  if (!fs.existsSync(src)) return;
-  const stat = fs.statSync(src);
-  if (stat.isDirectory()) {
-    fs.mkdirSync(dest, { recursive: true });
-    for (const entry of fs.readdirSync(src)) {
-      copyRecursive(path.join(src, entry), path.join(dest, entry));
-    }
-  } else {
-    fs.copyFileSync(src, dest);
+  if (!fs.existsSync(sourceDeploy)) {
+    log("warn", "Backup enthält keinen deploy-Ordner, nichts wiederherzustellen.", {
+      sourceDeploy
+    });
+    return;
   }
+
+  // Nur deploy löschen, niemals system-daemon etc. anfassen
+  if (fs.existsSync(targetDeploy)) {
+    fs.rmSync(targetDeploy, { recursive: true, force: true });
+  }
+
+  copyRecursive(sourceDeploy, targetDeploy);
+  log("info", "Backup wiederhergestellt.", { backupDir });
 }
 
 // -------------------------
@@ -356,9 +351,11 @@ async function applyZipUpdate(candidate) {
 
   const zipPath = candidate.zipPath;
 
-  // Sicherheitsprüfungen
   if (config.security && config.security.requireHash && candidate.hashFile) {
-    const expected = fs.readFileSync(candidate.hashFile, "utf8").trim().split(/\s+/)[0];
+    const expected = fs
+      .readFileSync(candidate.hashFile, "utf8")
+      .trim()
+      .split(/\s+/)[0];
     const ok = await security.verifySha256(zipPath, expected);
     if (!ok) {
       throw new Error("Hashprüfung für ZIP fehlgeschlagen.");
@@ -391,8 +388,6 @@ async function applyZipUpdate(candidate) {
   const zip = new AdmZip(zipPath);
   zip.extractAllTo(stagingDir, true);
 
-  // Hier könntest du einen Staging-Compose oder Teststart machen.
-  // Für Einfachheit: wir ersetzen den deploy-Ordner atomar.
   const deployCurrent = path.join(installRoot, "deploy");
   const deployNew = path.join(stagingDir, "deploy");
 
@@ -422,16 +417,10 @@ async function applyZipUpdate(candidate) {
 async function applyDockerUpdate(candidate, latestVersion) {
   log("info", "Wende Docker-Update an...", { candidate });
 
-  // Image ziehen
   await target.downloadImage(config, latestVersion);
-
-  // Version direkt ins .env schreiben
   target.writeEnvVersion(config, latestVersion);
-
-  // docker compose down / pull / up -d
   await target.restartDashboard(config);
 
-  // Healthcheck mehrfach versuchen (z.B. 10x alle 2 Sekunden)
   let ok = false;
   for (let i = 0; i < 10; i++) {
     ok = await target.checkHealth(config);
@@ -450,8 +439,6 @@ async function applyDockerUpdate(candidate, latestVersion) {
   });
 }
 
-
-
 // -------------------------
 // Haupt-Update-Check
 // -------------------------
@@ -462,7 +449,10 @@ async function checkOnce() {
 
   try {
     const currentVersion = target.readEnvVersion(config) || null;
-    log("info", "Aktuell installierte Version: " + (currentVersion || "(unbekannt)"));
+    log(
+      "info",
+      "Aktuell installierte Version: " + (currentVersion || "(unbekannt)")
+    );
 
     const candidate = await resolveLatestCandidate(currentVersion);
 
@@ -507,7 +497,6 @@ async function checkOnce() {
     try {
       if (candidate.artifactType === "zip") {
         await applyZipUpdate(candidate);
-        // Version ins .env schreiben, falls Candidate eine Version hat
         if (candidate.version) {
           target.writeEnvVersion(config, candidate.version);
         }
@@ -518,9 +507,11 @@ async function checkOnce() {
 
       const ok = await target.checkHealth(config);
       if (!ok) {
-        log("warn", "Healthcheck nach Update meldet noch nicht OK, Update aber bereits angewendet.");
+        log(
+          "warn",
+          "Healthcheck nach Update meldet noch nicht OK, Update aber bereits angewendet."
+        );
       }
-
 
       log("info", "Update erfolgreich abgeschlossen.", {
         newVersion: candidate.version
@@ -590,7 +581,6 @@ async function checkOnce() {
 async function main() {
   log("info", "Systemweiter Auto-Update-Daemon gestartet.");
 
-  // Optional: Self-Update des Daemons
   await checkAndApplySelfUpdate(config, log, security);
 
   await checkOnce();
