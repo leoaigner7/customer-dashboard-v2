@@ -1,48 +1,34 @@
-/**
- * CUSTOMER DASHBOARD – Docker Target
- * ----------------------------------
- * Zuständig für:
- *  - Logging (JSON-Logfile)
- *  - Lesen/Schreiben der APP_VERSION aus .env
- *  - Docker-Befehle (pull / compose up/down)
- *  - HTTP-Healthcheck
- */
-
+// system-daemon/targets/docker-dashboard.js
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
 /**
- * Zentrale Logfunktion.
+ * Zentrale Log-Funktion für Daemon & Targets.
+ * Schreibt JSON-Zeilen in eine Logdatei, damit sowohl Menschen
+ * als auch Maschinen das gut lesen/analysieren können.
  *
- * Schreibt JSON-Lines in eine Logdatei, z.B.:
- * {
- *   "ts": "2025-12-09T11:49:22.912Z",
- *   "level": "info",
- *   "message": "Docker-Update erfolgreich angewendet.",
- *   "context": {
- *     "event": "update.apply.docker",
- *     "version": "6.6.2",
- *     "durationMs": 1234
- *   }
- * }
- *
- * @param {"debug"|"info"|"warn"|"error"} level
- * @param {string} message
- * @param {object} [config]
- * @param {object} [context]
+ * Felder:
+ *  - ts:    ISO-Zeitstempel
+ *  - level: debug|info|warn|error
+ *  - msg:   kurze, klare Beschreibung
+ *  - extra: optionale Zusatzinfos (z.B. Version, Dauer, Fehlertext)
  */
-function log(level, message, config, context = undefined) {
+function log(level, message, config, extra = undefined) {
   const logFile =
-    (config && config.logging && config.logging.logFile) ||
-    (config && config.notification && config.notification.logFile) ||
+    (config &&
+      config.logging &&
+      config.logging.logFile) ||
+    (config &&
+      config.notification &&
+      config.notification.logFile) ||
     "C:\\CustomerDashboard\\logs\\daemon.log";
 
   const entry = {
     ts: new Date().toISOString(),
     level,
-    message,
-    context: context || undefined
+    msg: message,
+    extra,
   };
 
   const line = JSON.stringify(entry) + "\n";
@@ -51,25 +37,16 @@ function log(level, message, config, context = undefined) {
     fs.mkdirSync(path.dirname(logFile), { recursive: true });
     fs.appendFileSync(logFile, line, "utf8");
   } catch {
-    // Fallback auf Konsole, falls Datei nicht geschrieben werden kann
-    // (z.B. Berechtigungsproblem)
-    console.log(`[${entry.ts}] [${level}] ${message}`, context || "");
+    // Fallback zur Konsole, falls Datei nicht beschreibbar
+    console.log(
+      `[${entry.ts}] [${level}] ${message}`,
+      extra ? JSON.stringify(extra) : ""
+    );
   }
 }
 
 /**
- * Kleine Hilfsfunktion zur Laufzeitmessung.
- * @param {bigint} startHrtime - process.hrtime.bigint() zum Start
- * @returns {number} Dauer in Millisekunden
- */
-function durationMsFrom(startHrtime) {
-  const diffNs = process.hrtime.bigint() - startHrtime;
-  return Number(diffNs / 1000000n);
-}
-
-/**
- * Liest die Version aus der .env-Datei.
- * Die Key-Bezeichnung kommt aus config.target.versionKey (Default: APP_VERSION).
+ * Liest die aktuell installierte Version aus der .env-Datei.
  */
 function readEnvVersion(config) {
   const envFile = config.target.envFile;
@@ -82,12 +59,13 @@ function readEnvVersion(config) {
   const lines = fs.readFileSync(envFile, "utf8").split(/\r?\n/);
   const line = lines.find((l) => l.startsWith(key + "="));
   if (!line) return null;
-  return line.substring(key.length + 1).trim() || null;
+
+  const value = line.substring(key.length + 1).trim();
+  return value || null;
 }
 
 /**
- * Schreibt die Version in die .env-Datei.
- * Existierender Eintrag wird ersetzt, sonst angehängt.
+ * Schreibt eine Version in die .env-Datei (APP_VERSION=...).
  */
 function writeEnvVersion(config, version) {
   const envFile = config.target.envFile;
@@ -111,86 +89,60 @@ function writeEnvVersion(config, version) {
     newLines.push(`${key}=${version}`);
   }
 
-  fs.mkdirSync(path.dirname(envFile), { recursive: true });
   fs.writeFileSync(envFile, newLines.join("\n"), "utf8");
 }
 
 /**
- * Führt einen externen Befehl aus (z.B. docker, docker compose).
- *
- * - Loggt Start, Ende, Exit-Code und Dauer
- * - Gibt stdout als String zurück
- * - Wirft Fehler bei Exit-Code != 0
- *
- * @param {string} command
- * @param {string[]} args
- * @param {object} options
- * @param {(level:string, message:string, context?:object) => void} logFn
- * @returns {Promise<string>}
+ * Führt ein Kommando (z. B. docker) aus, sammelt stdout/stderr
+ * und loggt Start, Ende, Fehlercode & Dauer.
  */
-function runCommand(command, args, options = {}, logFn) {
+function runCommand(command, args, options = {}, config) {
   return new Promise((resolve, reject) => {
-    const startedAt = process.hrtime.bigint();
-
-    logFn("info", `Starte externen Befehl`, {
-      event: "process.start",
-      command,
-      args
-    });
+    const started = Date.now();
+    log("info", `Prozess gestartet: ${command} ${args.join(" ")}`, config);
 
     const child = spawn(command, args, {
       shell: false,
-      ...options
+      ...options,
     });
 
-    let stdout = "";
-    let stderr = "";
+    let output = "";
+    let errorOutput = "";
 
     child.stdout.on("data", (data) => {
-      stdout += data.toString();
+      output += data.toString();
     });
 
     child.stderr.on("data", (data) => {
-      stderr += data.toString();
+      errorOutput += data.toString();
     });
 
     child.on("error", (err) => {
-      const durationMs = durationMsFrom(startedAt);
-      logFn("error", `Konnte Befehl nicht starten`, {
-        event: "process.error",
-        command,
-        args,
+      log("error", `Prozessfehler beim Start von ${command}`, config, {
         error: err.message,
-        durationMs
       });
       reject(err);
     });
 
     child.on("close", (code) => {
-      const durationMs = durationMsFrom(startedAt);
+      const durationMs = Date.now() - started;
 
       if (code === 0) {
-        logFn("info", `Befehl beendet`, {
-          event: "process.end",
-          command,
-          args,
+        log("info", `Prozess erfolgreich beendet: ${command}`, config, {
           exitCode: code,
           durationMs,
-          stdout: stdout.trim() || undefined
+          output: output.trim(),
         });
-        resolve(stdout);
+        resolve(output);
       } else {
-        logFn("error", `Befehl mit Fehlercode beendet`, {
-          event: "process.end",
-          command,
-          args,
+        log("error", `Prozess mit Fehler beendet: ${command}`, config, {
           exitCode: code,
           durationMs,
-          stderr: stderr.trim() || undefined
+          stderr: errorOutput.trim(),
         });
         reject(
           new Error(
-            `${command} exited with code ${code}: ${stderr.trim()}`
+            `${command} exited with code ${code}: ${errorOutput.trim()}`
           )
         );
       }
@@ -199,83 +151,150 @@ function runCommand(command, args, options = {}, logFn) {
 }
 
 /**
- * Lädt ein Docker-Image aus dem Registry.
- * Nutzt config.sources.github.imageTemplate mit {version}.
+ * Lädt ein Docker-Image (docker pull).
  */
 async function downloadImage(config, version) {
-  const imageTemplate = config.sources.github.imageTemplate;
-  const image = imageTemplate.replace("{version}", version);
+  const template = config.sources.github.imageTemplate;
+  const image = template.replace("{version}", version);
 
-  await runCommand(
-    "docker",
-    ["pull", image],
-    {},
-    (level, message, context) => log(level, message, config, context)
-  );
+  log("info", "Starte Download des Docker-Images", config, {
+    image,
+    version,
+  });
+
+  await runCommand("docker", ["pull", image], {}, config);
+
+  log("info", "Docker-Image erfolgreich geladen", config, {
+    image,
+    version,
+  });
 
   return image;
 }
 
 /**
- * Startet das Dashboard über docker compose neu:
- *  - docker compose -f <file> down
- *  - docker compose -f <file> pull
- *  - docker compose -f <file> up -d
+ * Startet das Dashboard via docker compose neu:
+ *  - docker compose down
+ *  - docker compose pull
+ *  - docker compose up -d
  */
 async function restartDashboard(config) {
   const composeFile = config.target.composeFile;
+
+  log("info", "Starte Docker-Restart des Dashboards", config, {
+    composeFile,
+  });
 
   await runCommand(
     "docker",
     ["compose", "-f", composeFile, "down"],
     {},
-    (level, message, context) => log(level, message, config, context)
+    config
   );
 
   await runCommand(
     "docker",
     ["compose", "-f", composeFile, "pull"],
     {},
-    (level, message, context) => log(level, message, config, context)
+    config
   );
 
   await runCommand(
     "docker",
     ["compose", "-f", composeFile, "up", "-d"],
     {},
-    (level, message, context) => log(level, message, config, context)
+    config
   );
+
+  log("info", "Docker-Restart abgeschlossen", config, {
+    composeFile,
+  });
 }
 
 /**
- * Führt einen einzelnen HTTP-Healthcheck aus.
- * Gibt true zurück, wenn HTTP-Status 2xx/3xx.
- *
- * Mehrere Versuche / Retry-Logik kommen aus daemon.js.
+ * Healthcheck: /api/health des Dashboards.
+ * Versucht mehrfach (bis zu maxAttempts), mit Wartezeit dazwischen.
  */
-async function checkHealth(config) {
+async function checkHealth(config, maxAttempts = 20, delayMs = 2000) {
   const url = config.target.healthUrl;
-  if (!url) return true;
+  if (!url) {
+    // Wenn kein Healthcheck definiert ist, gehen wir von OK aus
+    return true;
+  }
+
+  const http = url.startsWith("https") ? require("https") : require("http");
+
+  log("info", "Starte Healthcheck für Dashboard", config, { url });
 
   return new Promise((resolve) => {
-    const http = url.startsWith("https") ? require("https") : require("http");
+    const tryCheck = (attempt) => {
+      const started = Date.now();
 
-    const req = http.get(url, (res) => {
-      const statusCode = res.statusCode || 0;
-      // Body wird nicht benötigt
-      res.resume();
-      const ok = statusCode >= 200 && statusCode < 400;
-      resolve(ok);
-    });
+      const req = http.get(url, (res) => {
+        res.resume(); // Body wird nicht benötigt
 
-    req.on("error", () => {
-      resolve(false);
-    });
+        const ok = res.statusCode >= 200 && res.statusCode < 400;
+        const durationMs = Date.now() - started;
 
-    req.setTimeout(3000, () => {
-      req.destroy();
-      resolve(false);
-    });
+        if (ok) {
+          log(
+            "info",
+            "Healthcheck erfolgreich",
+            config,
+            { attempt, statusCode: res.statusCode, durationMs }
+          );
+          return resolve(true);
+        }
+
+        log(
+          "warn",
+          "Healthcheck nicht erfolgreich",
+          config,
+          { attempt, statusCode: res.statusCode, durationMs }
+        );
+
+        if (attempt >= maxAttempts) {
+          log(
+            "error",
+            "Healthcheck endgültig fehlgeschlagen (Maximale Versuche erreicht)",
+            config,
+            { attempts: attempt }
+          );
+          return resolve(false);
+        }
+
+        setTimeout(() => tryCheck(attempt + 1), delayMs);
+      });
+
+      req.on("error", (err) => {
+        const durationMs = Date.now() - started;
+
+        log(
+          "warn",
+          "Healthcheck-Request fehlgeschlagen",
+          config,
+          { attempt, error: err.message, durationMs }
+        );
+
+        if (attempt >= maxAttempts) {
+          log(
+            "error",
+            "Healthcheck endgültig fehlgeschlagen (Netzwerkfehler)",
+            config,
+            { attempts: attempt }
+          );
+          return resolve(false);
+        }
+
+        setTimeout(() => tryCheck(attempt + 1), delayMs);
+      });
+
+      req.setTimeout(5000, () => {
+        req.destroy(new Error("Healthcheck Timeout"));
+      });
+    };
+
+    tryCheck(1);
   });
 }
 
@@ -286,5 +305,5 @@ module.exports = {
   downloadImage,
   restartDashboard,
   checkHealth,
-  // runCommand bewusst NICHT exportiert, um API klein zu halten
+  runCommand, // optional, falls du es später im Daemon nutzen möchtest
 };
