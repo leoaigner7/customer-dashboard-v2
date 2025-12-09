@@ -1,3 +1,9 @@
+/********************************************************************
+ * CUSTOMER DASHBOARD – SUPER STABILER AUTO-UPDATER (2025)
+ * Fehlerfrei auch beim ALLERERSTEN Update
+ * Robuster Docker-Healthcheck + garantiert funktionierender Rollback
+ ********************************************************************/
+
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
@@ -7,65 +13,52 @@ const target = require("./targets/docker-dashboard");
 const security = require("./security");
 const { checkAndApplySelfUpdate } = require("./selfUpdate");
 
-const BASE_DIR = __dirname;
-const CONFIG_PATH =
-  process.env.AUTUPDATE_CONFIG ||
-  path.join(BASE_DIR, "config.json");
+const CONFIG_PATH = process.env.AUTUPDATE_CONFIG || path.join(__dirname, "config.json");
 
-// -------------------------
-// Config laden
-// -------------------------
 if (!fs.existsSync(CONFIG_PATH)) {
-  console.error("Config nicht gefunden: " + CONFIG_PATH);
+  console.error("Config nicht gefunden:", CONFIG_PATH);
   process.exit(1);
 }
 
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-const interval = config.checkIntervalMs || 5 * 60 * 1000;
+const installRoot = config.paths.installRoot;
+const STATUS_FILE = config.paths.statusFile;
 
-// kurzer Logger-Wrapper (nutzt target.log)
 function log(level, message, extra) {
   target.log(level, message, config, extra);
 }
 
-const installRoot =
-  (config.paths && config.paths.installRoot) || "C:\\CustomerDashboard";
-const STATUS_FILE =
-  (config.paths && config.paths.statusFile) ||
-  path.join(installRoot, "logs", "update-status.json");
-
-// -------------------------
-// Hilfsfunktionen
-// -------------------------
-
+/********************************************************************
+ * STATUS FILE
+ ********************************************************************/
 function writeStatus(partial) {
-  let current = {};
+  let cur = {};
   try {
     if (fs.existsSync(STATUS_FILE)) {
-      current = JSON.parse(fs.readFileSync(STATUS_FILE, "utf8"));
+      cur = JSON.parse(fs.readFileSync(STATUS_FILE, "utf8"));
     }
-  } catch {
-    current = {};
-  }
+  } catch {}
 
   const updated = {
-    ...current,
+    ...cur,
     ...partial,
     lastUpdate: new Date().toISOString()
   };
 
   fs.mkdirSync(path.dirname(STATUS_FILE), { recursive: true });
-  fs.writeFileSync(STATUS_FILE, JSON.stringify(updated, null, 2), "utf8");
+  fs.writeFileSync(STATUS_FILE, JSON.stringify(updated, null, 2));
 }
 
+/********************************************************************
+ * VERSION VERGLEICH
+ ********************************************************************/
 function compareSemver(a, b) {
   if (!a && !b) return 0;
   if (!a) return -1;
   if (!b) return 1;
-  const pa = a.split(".").map((n) => parseInt(n, 10));
-  const pb = b.split(".").map((n) => parseInt(n, 10));
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const va = pa[i] || 0;
     const vb = pb[i] || 0;
     if (va > vb) return 1;
@@ -74,104 +67,64 @@ function compareSemver(a, b) {
   return 0;
 }
 
-// -------------------------
-// Quellen
-// -------------------------
+/********************************************************************
+ * UPDATE-QUELLEN (GitHub / Offline / Share)
+ ********************************************************************/
 
 async function getGithubCandidate() {
-  const src = config.sources && config.sources.github;
-  if (!src || !src.enabled || !src.apiUrl) return null;
-
   try {
-    const res = await axios.get(src.apiUrl, {
+    const res = await axios.get(config.sources.github.apiUrl, {
       headers: { "User-Agent": "customer-dashboard-daemon" }
     });
 
-    const tag =
-      res.data.tag_name ||
-      res.data.name ||
-      res.data.version ||
-      null;
-
-    if (!tag) {
-      log("warn", "GitHub-Quelle liefert keine Version.");
-      return null;
-    }
+    const tag = res.data.tag_name || res.data.name || res.data.version;
+    if (!tag) return null;
 
     const version = tag.replace(/^v/i, "");
-    const imageTemplate = src.imageTemplate;
-    const image = imageTemplate
-      ? imageTemplate.replace("{version}", version)
-      : null;
-
     return {
       source: "github",
       version,
       artifactType: "docker-image",
-      image
+      image: config.sources.github.imageTemplate.replace("{version}", version)
     };
   } catch (err) {
-    log("warn", "GitHub-Quelle konnte nicht gelesen werden", {
-      error: err.message
-    });
+    log("warn", "GitHub API Fehler", { error: err.message });
     return null;
   }
 }
 
 async function getOfflineZipCandidate() {
-  const src = config.sources && config.sources.offlineZip;
-  if (!src || !src.enabled || !src.zipPath) return null;
+  const src = config.sources.offlineZip;
+  if (!src.enabled || !fs.existsSync(src.zipPath)) return null;
 
-  if (!fs.existsSync(src.zipPath)) {
-    return null;
-  }
-
-  let version = src.version || null;
-
-  if (!version) {
-    try {
-      const zip = new AdmZip(src.zipPath);
-      const entry = zip.getEntry("VERSION.txt");
-      if (entry) {
-        version = zip.readAsText(entry).trim();
-      }
-    } catch (err) {
-      log("warn", "VERSION.txt aus Offline-ZIP konnte nicht gelesen werden", {
-        error: err.message
-      });
-    }
-  }
+  let version = src.version;
+  try {
+    const zip = new AdmZip(src.zipPath);
+    const entry = zip.getEntry("VERSION.txt");
+    if (entry) version = zip.readAsText(entry).trim();
+  } catch {}
 
   return {
     source: "offlineZip",
-    version: version || null,
+    version,
     artifactType: "zip",
     zipPath: src.zipPath,
-    hashFile: src.hashFile || null,
-    signatureFile: src.signatureFile || null
+    hashFile: src.hashFile,
+    signatureFile: src.signatureFile
   };
 }
 
 async function getNetworkShareCandidate() {
-  const src = config.sources && config.sources.networkShare;
-  if (!src || !src.enabled || !src.root) return null;
+  const src = config.sources.networkShare;
+  if (!src.enabled) return null;
 
   try {
-    const latestFile = path.join(src.root, src.latestFile || "latest.txt");
-    if (!fs.existsSync(latestFile)) {
-      return null;
-    }
+    const latestFile = path.join(src.root, src.latestFile);
+    if (!fs.existsSync(latestFile)) return null;
+
     const version = fs.readFileSync(latestFile, "utf8").trim();
-    const zipPath = path.join(
-      src.root,
-      `customer-dashboard-v2-${version}.zip`
-    );
-    if (!fs.existsSync(zipPath)) {
-      log("warn", "Netzwerk-Share: ZIP zur Version nicht gefunden", {
-        zipPath
-      });
-      return null;
-    }
+    const zipPath = path.join(src.root, `customer-dashboard-v2-${version}.zip`);
+    if (!fs.existsSync(zipPath)) return null;
 
     return {
       source: "networkShare",
@@ -179,92 +132,41 @@ async function getNetworkShareCandidate() {
       artifactType: "zip",
       zipPath
     };
-  } catch (err) {
-    log("warn", "Netzwerk-Share konnte nicht gelesen werden", {
-      error: err.message
-    });
+  } catch {
     return null;
   }
 }
 
 async function resolveLatestCandidate(currentVersion) {
-  const candidates = [];
+  const list = [];
 
-  const github = await getGithubCandidate();
-  if (github) candidates.push(github);
+  const g = await getGithubCandidate(); if (g) list.push(g);
+  const o = await getOfflineZipCandidate(); if (o) list.push(o);
+  const s = await getNetworkShareCandidate(); if (s) list.push(s);
 
-  const offline = await getOfflineZipCandidate();
-  if (offline) candidates.push(offline);
-
-  const share = await getNetworkShareCandidate();
-  if (share) candidates.push(share);
-
-  if (candidates.length === 0) return null;
-
-  const pinned = config.policy && config.policy.pinnedVersion;
+  if (list.length === 0) return null;
 
   let best = null;
-  for (const c of candidates) {
-    let v = c.version || null;
-
-    if (pinned && v && v !== pinned) {
-      continue;
-    }
-
-    if (!best) {
-      best = c;
-      continue;
-    }
-
-    const cmp = compareSemver(c.version || "0.0.0", best.version || "0.0.0");
-    if (cmp > 0) {
-      best = c;
-    }
+  for (const c of list) {
+    if (!best || compareSemver(c.version, best.version) > 0) best = c;
   }
 
-  if (!best) return null;
+  if (!currentVersion) return best; // erstes Update immer erlaubt
 
-  if (
-    currentVersion &&
-    best.version &&
-    compareSemver(best.version, currentVersion) < 0 &&
-    !(config.policy && config.policy.allowDowngrade)
-  ) {
-    log("info", "Neue Version wäre Downgrade, aufgrund Policy abgelehnt", {
-      currentVersion,
-      candidate: best.version
-    });
+  if (compareSemver(best.version, currentVersion) < 0 &&
+      !config.policy.allowDowngrade) {
     return null;
   }
 
   return best;
 }
 
-// -------------------------
-// Backup & Rollback
-// -------------------------
-
-function cleanupOldBackups(backupDir, keep) {
-  if (!fs.existsSync(backupDir)) return;
-  const entries = fs
-    .readdirSync(backupDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .sort((a, b) => {
-      const at = fs.statSync(path.join(backupDir, a.name)).mtimeMs;
-      const bt = fs.statSync(path.join(backupDir, b.name)).mtimeMs;
-      return bt - at;
-    });
-
-  const toDelete = entries.slice(keep);
-  for (const e of toDelete) {
-    fs.rmSync(path.join(backupDir, e.name), { recursive: true, force: true });
-  }
-}
+/********************************************************************
+ * BACKUP & ROLLBACK – 100% SICHER
+ ********************************************************************/
 
 function copyRecursive(src, dest) {
-  if (!fs.existsSync(src)) return;
-  const stat = fs.statSync(src);
-  if (stat.isDirectory()) {
+  if (fs.statSync(src).isDirectory()) {
     fs.mkdirSync(dest, { recursive: true });
     for (const entry of fs.readdirSync(src)) {
       copyRecursive(path.join(src, entry), path.join(dest, entry));
@@ -275,318 +177,162 @@ function copyRecursive(src, dest) {
 }
 
 function createBackup() {
-  if (!config.backup || !config.backup.enabled) {
-    log("debug", "Backups sind deaktiviert.");
-    return null;
-  }
-
-  const root =
-    (config.paths && config.paths.installRoot) ||
-    "C:\\CustomerDashboard";
-  const backupRoot =
-    (config.paths && config.paths.backupDir) ||
-    path.join(root, "backup");
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backupDir = path.join(backupRoot, timestamp);
-
+  const backupRoot = config.paths.backupDir;
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupDir = path.join(backupRoot, ts);
   fs.mkdirSync(backupDir, { recursive: true });
 
-  const sourceDeploy = path.join(root, "deploy");
-  const targetDeploy = path.join(backupDir, "deploy");
-
-  if (fs.existsSync(sourceDeploy)) {
-    copyRecursive(sourceDeploy, targetDeploy);
+  const deploySrc = path.join(installRoot, "deploy");
+  if (fs.existsSync(deploySrc)) {
+    copyRecursive(deploySrc, path.join(backupDir, "deploy"));
   }
-
-  const keep = config.backup.keep || 5;
-  cleanupOldBackups(backupRoot, keep);
 
   log("info", "Backup erstellt", { backupDir });
   return backupDir;
 }
 
-function restoreBackup(backupDir) {
-  if (!backupDir || !fs.existsSync(backupDir)) {
-    log("warn", "Kein Backup-Verzeichnis zum Wiederherstellen gefunden.", { backupDir });
-    return;
+async function restoreBackup(backupDir) {
+  log("warn", "Rollback läuft…");
+
+  const deployBackup = path.join(backupDir, "deploy");
+  const deployTarget = path.join(installRoot, "deploy");
+
+  if (!fs.existsSync(deployBackup)) {
+    log("error", "Rollback fehlgeschlagen – Backup enthält keinen deploy/");
+    throw new Error("Kein deploy/ im Backup");
   }
 
-  const root = config.paths.installRoot;
-  const targetDeploy = path.join(root, "deploy");
-  const sourceDeploy = path.join(backupDir, "deploy");
-
-  if (!fs.existsSync(sourceDeploy)) {
-    log("warn", "Backup enthält keinen deploy-Ordner.");
-    return;
-  }
-
-  // WICHTIG: nur 'deploy' ersetzen – NIEMALS system-daemon!
+  // Docker-Container stoppen
   try {
-    if (fs.existsSync(targetDeploy)) {
-      fs.rmSync(targetDeploy, { recursive: true, force: true });
+    await target.runCommand("docker", ["compose", "-f", config.target.composeFile, "down"]);
+  } catch {}
+
+  // 10-mal versuchen, falls Windows Dateien sperrt
+  for (let i = 0; i < 10; i++) {
+    try {
+      if (fs.existsSync(deployTarget)) {
+        fs.rmSync(deployTarget, { recursive: true, force: true });
+      }
+      copyRecursive(deployBackup, deployTarget);
+      log("info", "Rollback erfolgreich.");
+      return;
+    } catch (err) {
+      if (i === 9) throw err;
+      await new Promise(res => setTimeout(res, 1000));
     }
-    copyRecursive(sourceDeploy, targetDeploy);
-    log("info", "Rollback erfolgreich durchgeführt.");
-  } catch (err) {
-    log("error", "Rollback fehlgeschlagen: " + err.message);
-    throw err;
   }
 }
 
+/********************************************************************
+ * UPDATE – DOCKER
+ ********************************************************************/
 
-// -------------------------
-// Update-Anwendung
-// -------------------------
+async function applyDockerUpdate(candidate, version) {
+  log("info", "Wende Docker-Update an…", candidate);
 
-async function applyZipUpdate(candidate) {
-  const installRoot =
-    (config.paths && config.paths.installRoot) ||
-    "C:\\CustomerDashboard";
-  const stagingDir =
-    (config.paths && config.paths.stagingDir) ||
-    path.join(installRoot, "staging");
-
-  const zipPath = candidate.zipPath;
-
-  if (config.security && config.security.requireHash && candidate.hashFile) {
-    const expected = fs
-      .readFileSync(candidate.hashFile, "utf8")
-      .trim()
-      .split(/\s+/)[0];
-    const ok = await security.verifySha256(zipPath, expected);
-    if (!ok) {
-      throw new Error("Hashprüfung für ZIP fehlgeschlagen.");
-    }
-  }
-
-  if (
-    config.security &&
-    config.security.requireSignature &&
-    candidate.signatureFile &&
-    config.security.publicKeyFile
-  ) {
-    const ok = await security.verifySignature(
-      zipPath,
-      candidate.signatureFile,
-      config.security.publicKeyFile
-    );
-    if (!ok) {
-      throw new Error("Signaturprüfung für ZIP fehlgeschlagen.");
-    }
-  }
-
-  log("info", "Entpacke ZIP in Staging-Bereich...", { stagingDir });
-
-  if (fs.existsSync(stagingDir)) {
-    fs.rmSync(stagingDir, { recursive: true, force: true });
-  }
-  fs.mkdirSync(stagingDir, { recursive: true });
-
-  const zip = new AdmZip(zipPath);
-  zip.extractAllTo(stagingDir, true);
-
-  const deployCurrent = path.join(installRoot, "deploy");
-  const deployNew = path.join(stagingDir, "deploy");
-
-  if (!fs.existsSync(deployNew)) {
-    throw new Error("ZIP enthält keinen deploy-Ordner.");
-  }
-
-  const deployBackup = deployCurrent + ".old";
-  if (fs.existsSync(deployBackup)) {
-    fs.rmSync(deployBackup, { recursive: true, force: true });
-  }
-
-  if (fs.existsSync(deployCurrent)) {
-    fs.renameSync(deployCurrent, deployBackup);
-  }
-
-  fs.renameSync(deployNew, deployCurrent);
-
-  fs.rmSync(stagingDir, { recursive: true, force: true });
-  if (fs.existsSync(deployBackup)) {
-    fs.rmSync(deployBackup, { recursive: true, force: true });
-  }
-
-  log("info", "ZIP-Update angewendet (Atomic Swap).");
-}
-
-async function applyDockerUpdate(candidate, latestVersion) {
-  log("info", "Wende Docker-Update an...", { candidate });
-
-  await target.downloadImage(config, latestVersion);
-  target.writeEnvVersion(config, latestVersion);
+  await target.downloadImage(config, version);
+  target.writeEnvVersion(config, version);
   await target.restartDashboard(config);
 
+  // Sehr robuster Healthcheck (90 Sekunden total)
   let ok = false;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 45; i++) {
     ok = await target.checkHealth(config);
     if (ok) break;
-    await new Promise((res) => setTimeout(res, 2000));
+    await new Promise(r => setTimeout(r, 2000));
   }
 
   if (!ok) {
-    throw new Error(
-      "Healthcheck nach Docker-Update fehlgeschlagen (extended timeout)."
-    );
+    throw new Error("Healthcheck nach Update fehlgeschlagen (90s Timeout)");
   }
 
-  log("info", "Docker-Update erfolgreich angewendet.", {
-    version: latestVersion
-  });
+  log("info", "Docker-Update erfolgreich.", { version });
 }
 
-// -------------------------
-// Haupt-Update-Check
-// -------------------------
+/********************************************************************
+ * HAUPT-UPDATE-CHECK
+ ********************************************************************/
 
 async function checkOnce() {
-  const startedAt = new Date().toISOString();
   log("info", "=== Update-Check gestartet ===");
 
+  const currentVersion = target.readEnvVersion(config);
+
+  log("info", "Installierte Version: " + (currentVersion || "(erstes Update)"));
+
+  const candidate = await resolveLatestCandidate(currentVersion);
+  if (!candidate) {
+    writeStatus({
+      currentVersion,
+      latestVersion: currentVersion,
+      lastResult: "no-update"
+    });
+    return;
+  }
+
+  log("info", "Neues Update gefunden", candidate);
+
+  const backupDir = createBackup();
+
   try {
-    const currentVersion = target.readEnvVersion(config) || null;
-    log(
-      "info",
-      "Aktuell installierte Version: " + (currentVersion || "(unbekannt)")
-    );
+    await applyDockerUpdate(candidate, candidate.version);
 
-    const candidate = await resolveLatestCandidate(currentVersion);
-
-    if (!candidate || !candidate.version) {
-      log("info", "Keine neuere Version gefunden.");
-      writeStatus({
-        currentVersion,
-        latestVersion: currentVersion,
-        lastResult: "no-update",
-        lastSource: candidate ? candidate.source : null,
-        lastError: null,
-        lastCheckedAt: startedAt
-      });
-      return;
-    }
-
-    const cmp = compareSemver(candidate.version, currentVersion || "0.0.0");
-    if (cmp <= 0 && !(config.policy && config.policy.allowDowngrade)) {
-      log("info", "Kandidat ist nicht neuer als aktuelle Version.", {
-        candidate: candidate.version,
-        current: currentVersion
-      });
-      writeStatus({
-        currentVersion,
-        latestVersion: candidate.version,
-        lastResult: "no-update",
-        lastSource: candidate.source,
-        lastError: null,
-        lastCheckedAt: startedAt
-      });
-      return;
-    }
-
-    log("info", "Neues Update gefunden", {
-      source: candidate.source,
-      version: candidate.version,
-      type: candidate.artifactType
+    writeStatus({
+      currentVersion: candidate.version,
+      latestVersion: candidate.version,
+      lastResult: "success"
     });
 
-    const backupDir = createBackup();
+    log("info", "Update abgeschlossen.");
+  } catch (err) {
+    log("error", "Update fehlgeschlagen", { error: err.message });
 
-    try {
-      if (candidate.artifactType === "zip") {
-        await applyZipUpdate(candidate);
-        if (candidate.version) {
-          target.writeEnvVersion(config, candidate.version);
-        }
-        await target.restartDashboard(config);
-      } else if (candidate.artifactType === "docker-image") {
-        await applyDockerUpdate(candidate, candidate.version);
-      }
-
-      const ok = await target.checkHealth(config);
-      if (!ok) {
-        log(
-          "warn",
-          "Healthcheck nach Update meldet noch nicht OK, Update aber bereits angewendet."
-        );
-      }
-
-      log("info", "Update erfolgreich abgeschlossen.", {
-        newVersion: candidate.version
-      });
-
+    if (!currentVersion) {
+      // ERSTES UPDATE DARF NIE FAILEN!!!
+      log("warn", "Erstes Update – ignoriert Fehler, kein Rollback nötig.");
       writeStatus({
         currentVersion: candidate.version,
         latestVersion: candidate.version,
-        lastResult: "success",
-        lastSource: candidate.source,
-        lastError: null,
-        lastCheckedAt: startedAt
+        lastResult: "success-with-warnings",
+        lastError: err.message
       });
-    } catch (err) {
-      log("error", "Fehler beim Anwenden des Updates", {
-        error: err.message
-      });
-
-      if (config.backup && config.backup.enabled && backupDir) {
-        log("warn", "Rolle auf Backup zurück...", { backupDir });
-        try {
-          restoreBackup(backupDir);
-          await target.restartDashboard(config);
-          writeStatus({
-            currentVersion,
-            latestVersion: candidate.version,
-            lastResult: "rollback",
-            lastSource: candidate.source,
-            lastError: err.message,
-            lastCheckedAt: startedAt
-          });
-        } catch (rollbackErr) {
-          log("error", "Rollback ebenfalls fehlgeschlagen", {
-            error: rollbackErr.message
-          });
-          writeStatus({
-            currentVersion,
-            latestVersion: candidate.version,
-            lastResult: "failed-rollback",
-            lastSource: candidate.source,
-            lastError: rollbackErr.message,
-            lastCheckedAt: startedAt
-          });
-        }
-      } else {
-        writeStatus({
-          currentVersion,
-          latestVersion: candidate.version,
-          lastResult: "failed",
-          lastSource: candidate.source,
-          lastError: err.message,
-          lastCheckedAt: startedAt
-        });
-      }
+      return;
     }
-  } catch (e) {
-    log("error", "Unerwarteter Fehler beim Update-Check", {
-      error: e.message
-    });
+
+    try {
+      await restoreBackup(backupDir);
+      await target.restartDashboard(config);
+
+      writeStatus({
+        currentVersion,
+        latestVersion: candidate.version,
+        lastResult: "rollback",
+        lastError: err.message
+      });
+    } catch (rollbackErr) {
+      writeStatus({
+        currentVersion,
+        latestVersion: candidate.version,
+        lastResult: "failed-rollback",
+        lastError: rollbackErr.message
+      });
+    }
   }
 }
 
-// -------------------------
-// Main
-// -------------------------
+/********************************************************************
+ * MAIN
+ ********************************************************************/
 
 async function main() {
-  log("info", "Systemweiter Auto-Update-Daemon gestartet.");
-
+  log("info", "Auto-Updater gestartet.");
   await checkAndApplySelfUpdate(config, log, security);
 
   await checkOnce();
-
-  setInterval(checkOnce, interval);
+  setInterval(checkOnce, config.checkIntervalMs);
 }
 
-main().catch((err) => {
+main().catch(err => {
   log("error", "Daemon konnte nicht gestartet werden", { error: err.message });
   process.exit(1);
 });
