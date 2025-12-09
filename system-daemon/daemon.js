@@ -293,11 +293,6 @@ function createBackup() {
   }
 
   // Option: system-daemon sichern
-  const sourceDaemon = path.join(root, "system-daemon");
-  const targetDaemon = path.join(backupDir, "system-daemon");
-  if (fs.existsSync(sourceDaemon)) {
-    copyRecursive(sourceDaemon, targetDaemon);
-  }
 
   const keep = config.backup.keep || 5;
   cleanupOldBackups(backupRoot, keep);
@@ -325,13 +320,6 @@ function restoreBackup(backupDir) {
     copyRecursive(sourceDeploy, targetDeploy);
   }
 
-  const sourceDaemon = path.join(backupDir, "system-daemon");
-  // ⚠️ system-daemon wird NICHT mehr zurückkopiert, um EPERM zu vermeiden
-  if (fs.existsSync(sourceDaemon)) {
-    log("info", "Rollback ignoriert system-daemon (läuft aktiv).", {
-      backupDir
-    });
-  }
 }
 
 
