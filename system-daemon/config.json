@@ -25,7 +25,7 @@
     "versionKey": "APP_VERSION",
     "composeFile": "C:\\CustomerDashboard\\deploy\\docker-compose.yml",
     "serviceName": "dashboard",
-    "healthUrl": "http://localhost:8080/api/health"
+    "healthUrl": "http://localhost:8080"
   },
 
   "sources": {

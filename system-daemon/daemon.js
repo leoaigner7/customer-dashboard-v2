@@ -315,11 +315,17 @@ function restoreBackup(backupDir) {
 
   const sourceDeploy = path.join(backupDir, "deploy");
   const targetDeploy = path.join(root, "deploy");
-  if (fs.existsSync(sourceDeploy)) {
-    fs.rmSync(targetDeploy, { recursive: true, force: true });
-    copyRecursive(sourceDeploy, targetDeploy);
-  }
 
+// Deploy löschen – aber niemals system-daemon anfassen!
+if (fs.existsSync(targetDeploy)) {
+    fs.rmSync(targetDeploy, { recursive: true, force: true });
+}
+
+// Nur den Deploy-Ordner wiederherstellen, sonst NICHTS
+if (fs.existsSync(sourceDeploy)) {
+    copyRecursive(sourceDeploy, targetDeploy);
+
+}
 }
 
 
