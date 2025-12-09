@@ -171,22 +171,33 @@ async function restartDashboard(config) {
  */
 async function checkHealth(config) {
   const url = config.target.healthUrl;
-  if (!url) return true;
+  if (!url) return true;  
 
   return new Promise((resolve) => {
     const http = url.startsWith("https") ? require("https") : require("http");
-    const req = http.get(url, (res) => {
-      const ok = res.statusCode && res.statusCode >= 200 && res.statusCode < 400;
-      res.resume();
-      resolve(ok);
-    });
-    req.on("error", () => resolve(false));
-    req.setTimeout(8000, () => {
-      req.destroy();
-      resolve(false);
-    });
+
+    const tryCheck = (attempt) => {
+      const req = http.get(url, (res) => {
+        const ok = res.statusCode >= 200 && res.statusCode < 400;
+        res.resume();
+        if (ok) return resolve(true);
+
+        if (attempt >= 20) return resolve(false);
+        setTimeout(() => tryCheck(attempt + 1), 2000);
+      });
+
+      req.on("error", () => {
+        if (attempt >= 20) return resolve(false);
+        setTimeout(() => tryCheck(attempt + 1), 2000);
+      });
+
+      req.setTimeout(3000, () => req.destroy());
+    };
+
+    tryCheck(1);
   });
 }
+
 
 module.exports = {
   log,

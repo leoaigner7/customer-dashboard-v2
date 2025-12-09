@@ -308,34 +308,32 @@ function createBackup() {
 
 function restoreBackup(backupDir) {
   if (!backupDir || !fs.existsSync(backupDir)) {
-    log("warn", "Kein Backup-Verzeichnis zum Wiederherstellen gefunden.", {
-      backupDir
-    });
+    log("warn", "Kein Backup-Verzeichnis zum Wiederherstellen gefunden.", { backupDir });
     return;
   }
 
-  const root =
-    (config.paths && config.paths.installRoot) ||
-    "C:\\CustomerDashboard";
-
-  const sourceDeploy = path.join(backupDir, "deploy");
+  const root = config.paths.installRoot;
   const targetDeploy = path.join(root, "deploy");
+  const sourceDeploy = path.join(backupDir, "deploy");
 
   if (!fs.existsSync(sourceDeploy)) {
-    log("warn", "Backup enthält keinen deploy-Ordner, nichts wiederherzustellen.", {
-      sourceDeploy
-    });
+    log("warn", "Backup enthält keinen deploy-Ordner.");
     return;
   }
 
-  // Nur deploy löschen, niemals system-daemon etc. anfassen
-  if (fs.existsSync(targetDeploy)) {
-    fs.rmSync(targetDeploy, { recursive: true, force: true });
+  // WICHTIG: nur 'deploy' ersetzen – NIEMALS system-daemon!
+  try {
+    if (fs.existsSync(targetDeploy)) {
+      fs.rmSync(targetDeploy, { recursive: true, force: true });
+    }
+    copyRecursive(sourceDeploy, targetDeploy);
+    log("info", "Rollback erfolgreich durchgeführt.");
+  } catch (err) {
+    log("error", "Rollback fehlgeschlagen: " + err.message);
+    throw err;
   }
-
-  copyRecursive(sourceDeploy, targetDeploy);
-  log("info", "Backup wiederhergestellt.", { backupDir });
 }
+
 
 // -------------------------
 // Update-Anwendung

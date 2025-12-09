@@ -1,5 +1,5 @@
 # Customer Dashboard Installer for Windows
-# VERSION 4.1.3 FINAL CLEAN
+# VERSION 4.2 – FIXED HEALTHCHECK + SAFE START ORDER
 
 Param(
     [string]$ComposeFile = "docker-compose.yml"
@@ -10,7 +10,7 @@ Write-Host "=== Customer Dashboard Installer (Windows) ===`n" -ForegroundColor C
 # -------------------------------------------------------------
 # 0. ADMIN CHECK
 # -------------------------------------------------------------
-If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(`
+If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole] "Administrator"))
 {
     Write-Host "Dieses Skript muss als ADMINISTRATOR ausgeführt werden!" -ForegroundColor Red
@@ -21,7 +21,6 @@ If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 # -------------------------------------------------------------
 # 1. Verzeichnisse bestimmen
 # -------------------------------------------------------------
-
 $deployDir   = $PSScriptRoot
 $packageRoot = Split-Path -Parent $PSScriptRoot
 
@@ -44,7 +43,7 @@ New-Item -ItemType Directory -Force -Path $TargetDaemon  | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir        | Out-Null
 
 # -------------------------------------------------------------
-# 3. Robuster Kopiervorgang (mit Retry)
+# 3. Robuster Kopiervorgang
 # -------------------------------------------------------------
 function Copy-WithRetry($source, $target) {
     $success = $false
@@ -96,9 +95,7 @@ for ($i = 1; $i -le $maxWait; $i++) {
 }
 
 if (-not $envFound) {
-    Write-Host "ERROR: .env is not visible in C:\CustomerDashboard\deploy."
-    Write-Host "Files are copied correctly, but filesystem has not released the handle."
-    Write-Host "Stopping installation for safety."
+    Write-Host "ERROR: .env ist nicht sichtbar in C:\CustomerDashboard\deploy!"
     exit 1
 }
 
@@ -111,23 +108,22 @@ Write-Host "Version: $version"
 Write-Host "Port:    $port`n"
 
 # -------------------------------------------------------------
-# 5. Docker Compose Pfad
+# 5. Compose-Datei prüfen
 # -------------------------------------------------------------
 $composeFilePath = Join-Path $TargetDeploy $ComposeFile
-
 if (-not (Test-Path $composeFilePath)) {
     Write-Host "docker-compose.yml fehlt!" -ForegroundColor Red
     exit 1
 }
 
 # -------------------------------------------------------------
-# 6. Docker stoppen
+# 6. Container stoppen
 # -------------------------------------------------------------
 Write-Host "Stoppe alte Dashboard-Container..."
 docker compose -f "$composeFilePath" down | Out-Null
 
 # -------------------------------------------------------------
-# 7. Docker starten
+# 7. Neues Image laden + Container starten
 # -------------------------------------------------------------
 Write-Host "⬇ Lade aktuelles Image..."
 docker compose -f "$composeFilePath" pull
@@ -135,24 +131,34 @@ docker compose -f "$composeFilePath" pull
 Write-Host "Starte Dashboard..."
 docker compose -f "$composeFilePath" up -d
 
-Start-Sleep 10
-
 # -------------------------------------------------------------
-# 8. HTTP-Test
+# 8. ROBUSTER HEALTHCHECK (statt 10 Sekunden warten)
 # -------------------------------------------------------------
-Write-Host "Prüfe Dashboard..."
+Write-Host "Prüfe Dashboard Healthcheck..."
 
-$uri = "http://localhost:$port/"
+$healthUrl = "http://localhost:$port/api/health"
+$ok = $false
 
-try {
-    Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 10 | Out-Null
+for ($i = 1; $i -le 20; $i++) {
+    try {
+        $res = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
+        if ($res.StatusCode -ge 200 -and $res.StatusCode -lt 400) {
+            $ok = $true
+            break
+        }
+    } catch { }
+
+    Start-Sleep -Seconds 2
+}
+
+if ($ok) {
     Write-Host "Dashboard erfolgreich gestartet!" -ForegroundColor Green
-} catch {
-    Write-Host "Dashboard läuft, aber HTTP-Test fehlgeschlagen." -ForegroundColor Yellow
+} else {
+    Write-Host "WARNUNG: Dashboard antwortet nicht sauber, fahre trotzdem fort." -ForegroundColor Yellow
 }
 
 # -------------------------------------------------------------
-# 9. Auto-Update Task
+# 9. Auto-Updater installieren (NACH erfolgreichem Start!)
 # -------------------------------------------------------------
 Write-Host "Installiere Auto-Update Daemon..."
 
@@ -160,21 +166,17 @@ $nodePath = (Get-Command node.exe).Source
 $daemonPath = "C:\CustomerDashboard\system-daemon\daemon.js"
 $workingDir = "C:\CustomerDashboard\system-daemon"
 
-# Alten Task löschen falls vorhanden
 schtasks /delete /tn "CustomerDashboardAutoUpdater" /f 2>$null
 
-# ACTION
 $action = New-ScheduledTaskAction `
     -Execute $nodePath `
     -Argument "`"$daemonPath`"" `
     -WorkingDirectory $workingDir
 
-# TRIGGER beim Booten
 $triggerBoot = New-ScheduledTaskTrigger -AtStartup
 
-# TRIGGER alle 5 Minuten (gültige Duration!)
 $startTime = (Get-Date).AddMinutes(1).ToString("HH:mm")
-$duration = (New-TimeSpan -Days 3650)  # 10 Jahre gültig
+$duration = (New-TimeSpan -Days 3650)
 
 $triggerRepeat = New-ScheduledTaskTrigger `
     -Once `
@@ -182,7 +184,6 @@ $triggerRepeat = New-ScheduledTaskTrigger `
     -RepetitionInterval (New-TimeSpan -Minutes 5) `
     -RepetitionDuration $duration
 
-# TASK REGISTRIEREN (SYSTEM)
 Register-ScheduledTask `
     -TaskName "CustomerDashboardAutoUpdater" `
     -Action $action `
@@ -191,9 +192,6 @@ Register-ScheduledTask `
     -User "SYSTEM"
 
 Write-Host "Auto-Update Daemon installiert (SYSTEM Task)."
-
-
-
 
 # -------------------------------------------------------------
 # 10. Fertig
