@@ -29,8 +29,8 @@ export default function StatusPage() {
         border: "1px solid #7bb3ff",
         borderRadius: "8px"
    }}>
-  <h3 style={{ margin: 0 }}>Version 6.6.8 – Neue Funktion aktiviert</h3>
-  <p style={{ margin: 0 }}>Dieses Banner erscheint nur in Version 6.6.8. Damit kannst du Auto-Updates sofort prüfen.</p>
+  <h3 style={{ margin: 0 }}>Version 6.6.9 – Neue Funktion aktiviert</h3>
+  <p style={{ margin: 0 }}>Dieses Banner erscheint nur in Version 6.6.9. Damit kannst du Auto-Updates sofort prüfen.</p>
 </div>
 
       <h1>Update-Status</h1>
