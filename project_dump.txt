@@ -1,3263 +1,4 @@
------ FILE: C:\Users\leoa\customer-dashboard-v2\.github\workflows\release.yml -----
-name: Release
-
-on:
-  push:
-    tags:
-      - '*'
-
-jobs:
-  build-release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-
-    env:
-      REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/customer-dashboard-v2
-
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Extract version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      # ===========================
-      # FRONTEND BUILD
-      # ===========================
-
-      - name: Install frontend deps
-        working-directory: app/frontend
-        run: npm ci || npm install
-
-      - name: Build frontend
-        working-directory: app/frontend
-        run: npm run build
-
-      # ===========================
-      # BACKEND DEPS
-      # ===========================
-
-      - name: Install backend deps
-        working-directory: app/backend
-        run: npm ci || npm install
-
-      # ===========================
-      # DOCKER BUILD
-      # ===========================
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build Docker Image
-        run: |
-          docker build \
-            --build-arg VERSION=$VERSION \
-            -t $REGISTRY/${IMAGE_NAME}:$VERSION \
-            -t $REGISTRY/${IMAGE_NAME}:latest .
-
-      # ===========================
-      # TEST IMAGE
-      # ===========================
-
-      - name: Test Docker Image
-        run: |
-          docker run -d -p 8088:3000 --name cd-test $REGISTRY/${IMAGE_NAME}:$VERSION
-
-          echo "Waiting for container to be ready..."
-          for i in {1..15}; do
-            sleep 2
-            if curl -f http://localhost:8088/api/version >/dev/null 2>&1; then
-              echo "Container is ready!"
-              break
-            fi
-            echo "Still waiting..."
-            if [ $i -eq 15 ]; then
-              echo "Container did not start."
-              docker logs cd-test
-              exit 1
-            fi
-          done
-
-          docker logs cd-test
-          docker stop cd-test
-          docker rm cd-test
-
-      # ===========================
-      # PUSH IMAGE
-      # ===========================
-
-      - name: Push Docker Images
-        run: |
-          docker push $REGISTRY/${IMAGE_NAME}:$VERSION
-          docker push $REGISTRY/${IMAGE_NAME}:latest
-
-      # ===========================
-      # CREATE CUSTOMER ZIP
-      # ===========================
-
-      - name: Create customer package
-        run: |
-          mkdir -p package/deploy
-          mkdir -p package/system-daemon
-
-          # Deploy-Skripte
-          cp deploy/docker-compose.yml package/deploy/
-          cp deploy/install.ps1 package/deploy/
-          cp deploy/install.sh package/deploy/
-          cp deploy/.env.example package/deploy/.env
-          echo "APP_VERSION=$VERSION" >> package/deploy/.env
-
-          # System-Daemon komplett
-          cp -r system-daemon/* package/system-daemon/
-          cp system-daemon/config.json package/system-daemon/config.json
-
-          # Doku / Meta
-          cp README.md package/
-          echo "$VERSION" > package/VERSION.txt
-
-          cd package
-          zip -r ../customer-dashboard-v2-$VERSION.zip .
-
-      # ===========================
-      # HASH-FILE ERZEUGEN
-      # ===========================
-
-      - name: Create SHA256 checksum
-        run: |
-          sha256sum customer-dashboard-v2-$VERSION.zip > customer-dashboard-v2-$VERSION.zip.sha256
-
-      # ===========================
-      # GITHUB RELEASE
-      # ===========================
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            customer-dashboard-v2-${{ env.VERSION }}.zip
-            customer-dashboard-v2-${{ env.VERSION }}.zip.sha256
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\.idea\customer-dashboard-main.iml -----
-<?xml version="1.0" encoding="UTF-8"?>
-<module type="JAVA_MODULE" version="4">
-  <component name="NewModuleRootManager" inherit-compiler-output="true">
-    <exclude-output />
-    <content url="file://$MODULE_DIR$" />
-    <orderEntry type="inheritedJdk" />
-    <orderEntry type="sourceFolder" forTests="false" />
-  </component>
-</module>
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\.idea\misc.xml -----
-<?xml version="1.0" encoding="UTF-8"?>
-<project version="4">
-  <component name="ProjectRootManager" version="2" languageLevel="JDK_22" default="true" project-jdk-name="openjdk-22" project-jdk-type="JavaSDK">
-    <output url="file://$PROJECT_DIR$/out" />
-  </component>
-</project>
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\.idea\modules.xml -----
-<?xml version="1.0" encoding="UTF-8"?>
-<project version="4">
-  <component name="ProjectModuleManager">
-    <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/customer-dashboard-main.iml" filepath="$PROJECT_DIR$/.idea/customer-dashboard-main.iml" />
-    </modules>
-  </component>
-</project>
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\.idea\vcs.xml -----
-<?xml version="1.0" encoding="UTF-8"?>
-<project version="4">
-  <component name="VcsDirectoryMappings">
-    <mapping directory="$PROJECT_DIR$" vcs="Git" />
-  </component>
-</project>
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\dashboard.js -----
-const express = require("express");
-const db = require("../db");
-const router = express.Router();
-
-router.get("/", (req, res) => {
-  // Beispielkarten
-  const cards = [
-    { id: 1, title: "Benutzer", value: db.prepare("SELECT COUNT(*) AS c FROM users").get().c },
-    { id: 2, title: "Logs", value: db.prepare("SELECT COUNT(*) AS c FROM logs").get().c }
-  ];
-
-  // Letzte 5 Logs
-  const recentLogs = db.prepare(
-    "SELECT level, message, created_at FROM logs ORDER BY id DESC LIMIT 5"
-  ).all();
-
-  res.json({
-    cards,
-    recentLogs
-  });
-});
-
-module.exports = router;
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\logs.js -----
-const express = require("express");
-const db = require("../db");
-
-const router = express.Router();
-
-// GET /api/logs
-router.get("/", async (req, res) => {
-  try {
-    const { limit = 200, level, since } = req.query;
-
-    let query = `SELECT id, level, message, created_at FROM logs`;
-    const params = [];
-
-    if (level) {
-      query += " WHERE level = ?";
-      params.push(level);
-    }
-
-    if (since) {
-      query += level ? " AND created_at > ?" : " WHERE created_at > ?";
-      params.push(since);
-    }
-
-    query += " ORDER BY created_at DESC LIMIT ?";
-    params.push(parseInt(limit, 10));
-
-    const rows = db.prepare(query).all(...params);
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: "Logabfrage fehlgeschlagen", detail: err.message });
-  }
-});
-
-// POST /api/logs
-router.post("/", (req, res) => {
-  try {
-    const { level = "info", message } = req.body;
-
-    if (!message) {
-      return res.status(400).json({ error: "message fehlt" });
-    }
-
-    db.prepare(
-      `INSERT INTO logs (level, message, created_at)
-       VALUES (?, ?, datetime('now'))`
-    ).run(level, message);
-
-    res.json({ status: "ok" });
-  } catch (err) {
-    res.status(500).json({ error: "Log konnte nicht gespeichert werden", detail: err.message });
-  }
-});
-
-module.exports = router;
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\settings.js -----
-const express = require("express");
-const db = require("../db");
-const { authMiddleware } = require("../auth");
-
-const router = express.Router();
-
-// GET /api/settings → Alle Settings abrufen
-router.get("/", authMiddleware("admin"), (req, res) => {
-  try {
-    const rows = db.prepare("SELECT key, value FROM settings").all();
-    const map = {};
-    rows.forEach((r) => {
-      map[r.key] = r.value;
-    });
-
-    res.json(map);
-  } catch (err) {
-    res.status(500).json({ error: "Settings konnten nicht geladen werden", detail: err.message });
-  }
-});
-
-// POST /api/settings → Setting setzen
-router.post("/", authMiddleware("admin"), (req, res) => {
-  const { key, value } = req.body;
-
-  if (!key) {
-    return res.status(400).json({ error: "key fehlt" });
-  }
-
-  try {
-    db.prepare(`
-      INSERT INTO settings (key, value) VALUES (?, ?)
-      ON CONFLICT(key) DO UPDATE SET value=excluded.value;
-    `).run(key, value);
-
-    res.json({ status: "ok" });
-  } catch (err) {
-    res.status(500).json({ error: "Fehler beim Speichern", detail: err.message });
-  }
-});
-
-// Spezialrouten für Update-Policy
-router.post("/policy", authMiddleware("admin"), (req, res) => {
-  const { pinnedVersion, allowDowngrade } = req.body;
-
-  try {
-    db.prepare(`
-      INSERT INTO settings (key, value) VALUES ('pinnedVersion', ?)
-      ON CONFLICT(key) DO UPDATE SET value=excluded.value;
-    `).run(pinnedVersion || null);
-
-    db.prepare(`
-      INSERT INTO settings (key, value) VALUES ('allowDowngrade', ?)
-      ON CONFLICT(key) DO UPDATE SET value=excluded.value;
-    `).run(String(!!allowDowngrade));
-
-    res.json({ status: "ok" });
-  } catch (err) {
-    res.status(500).json({ error: "Fehler beim Speichern der Policy", detail: err.message });
-  }
-});
-
-module.exports = router;
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\status.js -----
-const express = require("express");
-const fs = require("fs");
-const path = require("path");
-
-const router = express.Router();
-
-// Pfad des Statusfiles aus dem Daemon
-const DEFAULT_STATUS_FILE =
-  "C:\\CustomerDashboard\\logs\\update-status.json";
-
-// Unterstützt Linux & Windows
-function getStatusFilePath() {
-  if (process.env.STATUS_FILE) {
-    return process.env.STATUS_FILE;
-  }
-  return DEFAULT_STATUS_FILE;
-}
-
-// API: GET /api/status
-router.get("/", (req, res) => {
-  const statusFile = getStatusFilePath();
-
-  let data = {
-    installedVersion: null,
-    latestVersion: null,
-    lastResult: null,
-    lastSource: null,
-    lastError: null,
-    lastCheckedAt: null,
-    nextCheckAt: null,
-    rollbackAvailable: null,
-    health: null,
-  };
-
-  try {
-    if (fs.existsSync(statusFile)) {
-      const raw = fs.readFileSync(statusFile, "utf8");
-      const parsed = JSON.parse(raw);
-
-      data.installedVersion = parsed.currentVersion || null;
-      data.latestVersion = parsed.latestVersion || null;
-      data.lastResult = parsed.lastResult || null;
-      data.lastSource = parsed.lastSource || null;
-      data.lastError = parsed.lastError || null;
-      data.lastCheckedAt = parsed.lastCheckedAt || null;
-      data.rollbackAvailable =
-        parsed.lastResult === "rollback" ||
-        parsed.lastResult === "failed-rollback";
-
-      // Nächster gepl. Lauf berechnen
-      const interval =
-        parseInt(process.env.DAEMON_INTERVAL_MS || "300000", 10) || 300000;
-      if (parsed.lastCheckedAt) {
-        const next = new Date(Date.parse(parsed.lastCheckedAt) + interval);
-        data.nextCheckAt = next.toISOString();
-      }
-
-      // Health Information
-      data.health = parsed.health || "unknown";
-    }
-  } catch (err) {
-    return res.status(500).json({
-      error: "Statusfile konnte nicht gelesen werden.",
-      detail: err.message,
-    });
-  }
-
-  res.json(data);
-});
-
-module.exports = router;
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\users.js -----
-const express = require("express");
-const bcrypt = require("bcryptjs");
-const db = require("../db");
-const { authMiddleware } = require("../auth");
-
-const router = express.Router();
-
-// GET /api/users → Admin: Nutzertabelle abrufen
-router.get("/", authMiddleware("admin"), (req, res) => {
-  try {
-    const users = db
-      .prepare("SELECT id, email, role, created_at FROM users ORDER BY id DESC")
-      .all();
-
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ error: "Fehler beim Laden der Benutzer", detail: err.message });
-  }
-});
-
-// POST /api/users → Admin: Benutzer anlegen
-router.post("/", authMiddleware("admin"), async (req, res) => {
-  const { email, password, role = "user" } = req.body;
-
-  if (!email || !password)
-    return res.status(400).json({ error: "email und password sind erforderlich" });
-
-  try {
-    const hash = await bcrypt.hash(password, 10);
-
-    db.prepare(
-      "INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)"
-    ).run(email, hash, role);
-
-    res.json({ status: "ok" });
-  } catch (err) {
-    if (err.message.includes("UNIQUE")) {
-      return res.status(400).json({ error: "Email bereits vergeben" });
-    }
-    res.status(500).json({ error: "Fehler beim Erstellen", detail: err.message });
-  }
-});
-
-// PUT /api/users/:id/password → User oder Admin: Passwort ändern
-router.put("/:id/password", authMiddleware(), async (req, res) => {
-  const userId = parseInt(req.params.id, 10);
-  const { newPassword } = req.body;
-
-  if (!newPassword)
-    return res.status(400).json({ error: "newPassword fehlt" });
-
-  try {
-    // Nur Admin oder eigener Account
-    if (req.user.role !== "admin" && req.user.id !== userId) {
-      return res.status(403).json({ error: "Keine Berechtigung" });
-    }
-
-    const hash = await bcrypt.hash(newPassword, 10);
-
-    db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, userId);
-
-    res.json({ status: "ok" });
-  } catch (err) {
-    res.status(500).json({ error: "Passwortänderung fehlgeschlagen", detail: err.message });
-  }
-});
-
-// DELETE /api/users/:id → Admin: Benutzer löschen
-router.delete("/:id", authMiddleware("admin"), (req, res) => {
-  const userId = parseInt(req.params.id, 10);
-
-  try {
-    db.prepare("DELETE FROM users WHERE id = ?").run(userId);
-
-    res.json({ status: "ok" });
-  } catch (err) {
-    res.status(500).json({ error: "Löschen fehlgeschlagen", detail: err.message });
-  }
-});
-
-module.exports = router;
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\version.js -----
-const express = require("express");
-const router = express.Router();
-
-router.get("/", (req, res) => {
-  const version = process.env.APP_VERSION || "unknown";
-  res.json({ version });
-});
-
-module.exports = router;
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\auth.js -----
-const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
-const db = require("./db");
-
-const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
-const TOKEN_EXPIRES = "8h";
-
-function signUser(user) {
-  return jwt.sign(
-    {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    },
-    JWT_SECRET,
-    { expiresIn: TOKEN_EXPIRES }
-  );
-}
-
-function authMiddleware(requiredRole = null) {
-  return (req, res, next) => {
-    const auth = req.headers.authorization;
-
-    if (!auth || !auth.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Token fehlt" });
-    }
-
-    const token = auth.replace("Bearer ", "");
-
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      req.user = decoded;
-
-      if (requiredRole && decoded.role !== requiredRole) {
-        return res.status(403).json({ error: "Keine Berechtigung" });
-      }
-
-      next();
-    } catch {
-      return res.status(401).json({ error: "Ungültiger Token" });
-    }
-  };
-}
-
-// Login-Handler
-async function handleLogin(req, res) {
-  const { email, password } = req.body;
-
-  try {
-    const user = db
-      .prepare("SELECT * FROM users WHERE email = ?")
-      .get(email);
-
-    if (!user) {
-      return res.status(401).json({ error: "Ungültige Login-Daten" });
-    }
-
-    const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) {
-      return res.status(401).json({ error: "Ungültige Login-Daten" });
-    }
-
-    const token = signUser(user);
-
-    res.json({
-      token,
-      user: {
-        email: user.email,
-        role: user.role,
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ error: "Login fehlgeschlagen", detail: err.message });
-  }
-}
-
-module.exports = {
-  signUser,
-  authMiddleware,
-  handleLogin,
-};
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\db.js -----
-const Database = require("better-sqlite3");
-const path = require("path");
-const fs = require("fs");
-
-const DB_PATH =
-  process.env.DB_PATH ||
-  path.join(__dirname, "database.db");
-
-const db = new Database(DB_PATH);
-
-// Tabellen anlegen, falls nicht vorhanden
-db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  role TEXT DEFAULT 'user',
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  key TEXT UNIQUE NOT NULL,
-  value TEXT
-);
-
-CREATE TABLE IF NOT EXISTS logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  level TEXT NOT NULL,
-  message TEXT NOT NULL,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
--- Optional für Status-Langzeitspeicherung:
-CREATE TABLE IF NOT EXISTS update_history (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  version TEXT,
-  source TEXT,
-  result TEXT,
-  error TEXT,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-`);
-
-// Seed-Admin erzeugen, wenn noch keiner existiert
-const adminExists = db
-  .prepare("SELECT COUNT(*) AS count FROM users WHERE role='admin'")
-  .get().count;
-
-if (!adminExists) {
-  const bcrypt = require("bcryptjs");
-  const password = bcrypt.hashSync("admin123", 10);
-
-  db.prepare(
-    `INSERT INTO users (email, password_hash, role)
-     VALUES ('admin@example.com', ?, 'admin')`
-  ).run(password);
-
-  console.log("Seed-Admin erzeugt: admin@example.com / admin123");
-}
-
-module.exports = db;
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\package.json -----
-{
-    "name": "customer-dashboard-backend",
-    "version": "2.0.0",
-    "main": "src/server.js",
-    "scripts": {
-      "start": "node src/server.js",
-      "dev": "nodemon src/server.js"
-    },
-    "dependencies": {
-      "bcryptjs": "^2.4.3",
-      "cors": "^2.8.5",
-      "dotenv": "^16.4.0",
-      "express": "^4.19.0",
-      "jsonwebtoken": "^9.0.2",
-      "better-sqlite3": "^9.0.0"
-    },
-    "devDependencies": {
-      "nodemon": "^3.1.0"
-    }
-  }
-  
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\server.js -----
-require("dotenv").config();
-
-const express = require("express");
-const cors = require("cors");
-const path = require("path");
-
-// ROUTES
-const dashboardRouter = require("./routes/dashboard");
-const logsRouter = require("./routes/logs");
-const settingsRouter = require("./routes/settings");
-const usersRouter = require("./routes/users");
-const statusRouter = require("./routes/status");
-const versionRouter = require("./routes/version");
-
-const app = express();
-
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
-
-// ----------------------------
-// API ROUTES
-// ----------------------------
-app.use("/api/dashboard", dashboardRouter);
-app.use("/api/logs", logsRouter);
-app.use("/api/settings", settingsRouter);
-app.use("/api/users", usersRouter);
-app.use("/api/status", statusRouter);
-app.use("/api/version", versionRouter);
-
-// HEALTHCHECK
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
-
-// ----------------------------
-// STATIC REACT BUILD (IMPORTANT: BEFORE wildcard route!)
-// ----------------------------
-const publicPath = path.join(__dirname, "public");
-app.use(express.static(publicPath));
-
-// ----------------------------
-// SPA FALLBACK (MUST BE LAST ROUTE)
-// ----------------------------
-app.get("*", (req, res) => {
-  res.sendFile(path.join(publicPath, "index.html"));
-});
-
-// ----------------------------
-// SERVER STARTS ON PORT 3000
-// ----------------------------
-const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`Backend läuft auf Port ${PORT}`);
-});
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\components\Layout.jsx -----
-import { useAuth } from "../context/AuthContext.jsx";
-import Sidebar from "./Sidebar.jsx";
-import Topbar from "./Topbar.jsx";
-
-export default function Layout({ children }) {
-  const { user } = useAuth();
-
-  return (
-    <div className="layout">
-      <Sidebar />
-      <div className="main">
-        <Topbar user={user} />
-        <div className="content">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\components\Sidebar.jsx -----
-import { Link, useLocation } from "react-router-dom";
-
-export default function Sidebar() {
-  const location = useLocation();
-  const link = (to, label) => (
-    <Link
-      to={to}
-      className={
-        "nav-link" + (location.pathname === to ? " nav-link-active" : "")
-      }
-    >
-      {label}
-    </Link>
-  );
-
-  return (
-    <aside className="sidebar">
-      <h2>Customer Dashboard</h2>
-      {link("/", "Dashboard")}
-      {link("/status", "Update-Status")} {/* NEU */}
-      {link("/logs", "Logs")}
-      {link("/reports", "Reports")}
-      {link("/settings", "Einstellungen")}
-    </aside>
-  );
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\components\Topbar.jsx -----
-import { useAuth } from "../context/AuthContext.jsx";
-
-export default function Topbar({ user }) {
-  const { logout } = useAuth();
-  return (
-    <header className="topbar">
-      <div>Willkommen, {user?.email}</div>
-      <button onClick={logout}>Logout</button>
-    </header>
-  );
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\context\AuthContext.jsx -----
-import { createContext, useContext, useEffect, useState } from "react";
-import api from "../api";
-
-const AuthContext = createContext(null);
-
-export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-    api
-      .get("/auth/me")
-      .then(res => setUser(res.data))
-      .catch(() => localStorage.removeItem("token"))
-      .finally(() => setLoading(false));
-  }, []);
-
-  const login = async (email, password) => {
-    const res = await api.post("/auth/login", { email, password });
-    localStorage.setItem("token", res.data.token);
-    setUser(res.data.user);
-  };
-
-  const logout = () => {
-    localStorage.removeItem("token");
-    setUser(null);
-  };
-
-  return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
-      {children}
-    </AuthContext.Provider>
-  );
-}
-
-export function useAuth() {
-  return useContext(AuthContext);
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\DashboardPage.jsx -----
-import { useEffect, useState } from "react";
-import api from "../api";
-
-export default function DashboardPage() {
-  const [data, setData] = useState({ cards: [], recentLogs: [] });
-  const [version, setVersion] = useState("");
-
-  // Widgets / Dashboard-Daten laden
-  useEffect(() => {
-    api.get("/dashboard")
-      .then(res => setData({
-        cards: res.data.cards ?? [],
-        recentLogs: res.data.recentLogs ?? []
-      }))
-      .catch(() => setData({ cards: [], recentLogs: [] }));
-  }, []);
-
-  // Version vom Backend holen
-  useEffect(() => {
-    fetch("/api/version")
-      .then(res => res.json())
-      .then(data => setVersion(data.version))
-      .catch(() => setVersion("unknown"));
-  }, []);
-
-  return (
-    <div>
-      <h1>Dashboard {version ? `v${version}` : ""}</h1>
-
-      <div className="cards">
-        {(data.cards ?? []).map(card => (
-          <div key={card.id} className="card">
-            <h3>{card.title}</h3>
-            <p className="card-value">{card.value}</p>
-          </div>
-        ))}
-      </div>
-
-      <h2>Letzte Logs</h2>
-      <ul className="logs">
-        {(data.recentLogs ?? []).map((log, i) => (
-          <li key={i}>
-            <strong>[{log.level}]</strong> {log.message}{" "}
-            <span className="muted">{log.created_at}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\LoginPage.jsx -----
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext.jsx";
-
-export default function LoginPage() {
-  const { login } = useAuth();
-  const nav = useNavigate();
-  const [email, setEmail] = useState("admin@example.com");
-  const [password, setPassword] = useState("admin123");
-  const [error, setError] = useState("");
-
-  const submit = async e => {
-    e.preventDefault();
-    setError("");
-    try {
-      await login(email, password);
-      nav("/");
-    } catch (err) {
-      setError("Login fehlgeschlagen");
-    }
-  };
-
-  return (
-    <div className="center">
-      <form className="card" onSubmit={submit}>
-        <h1>Login</h1>
-        <label>E-Mail
-          <input value={email} onChange={e => setEmail(e.target.value)} />
-        </label>
-        <label>Passwort
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-          />
-        </label>
-        {error && <div className="error">{error}</div>}
-        <button type="submit">Anmelden</button>
-      </form>
-    </div>
-  );
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\LogsPage.jsx -----
-import { useEffect, useState } from "react";
-import api from "../api";
-
-export default function LogsPage() {
-  const [logs, setLogs] = useState([]);
-
-  useEffect(() => {
-    api.get("/logs").then(res => setLogs(res.data));
-  }, []);
-
-  return (
-    <div>
-      <h1>Logs</h1>
-      <ul className="logs">
-        {logs.map((log, i) => (
-          <li key={i}>
-            <strong>[{log.level}]</strong> {log.message}{" "}
-            <span className="muted">{log.created_at}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\ReportsPage.jsx -----
-export default function ReportsPage() {
-    return (
-      <div>
-        <h1>Reports</h1>
-        <p>Hier kannst du später Berichte, Export, PDF usw. einbauen.</p>
-      </div>
-    );
-  }
-  
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\SettingsPage.jsx -----
-import { useEffect, useState } from "react";
-import api from "../api";
-
-export default function SettingsPage() {
-  const [settings, setSettings] = useState({ theme: "light", language: "de" });
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    api.get("/settings").then(res => setSettings(res.data));
-  }, []);
-
-  const save = async () => {
-    setSaved(false);
-    await api.put("/settings", settings);
-    setSaved(true);
-  };
-
-  return (
-    <div>
-      <h1>Einstellungen</h1>
-      <div className="form-row">
-        <label>Theme</label>
-        <select
-          value={settings.theme}
-          onChange={e =>
-            setSettings(s => ({ ...s, theme: e.target.value }))
-          }
-        >
-          <option value="light">Hell</option>
-          <option value="dark">Dunkel</option>
-        </select>
-      </div>
-
-      <div className="form-row">
-        <label>Sprache</label>
-        <select
-          value={settings.language}
-          onChange={e =>
-            setSettings(s => ({ ...s, language: e.target.value }))
-          }
-        >
-          <option value="de">Deutsch</option>
-          <option value="en">Englisch</option>
-        </select>
-      </div>
-
-      <button onClick={save}>Speichern</button>
-      {saved && <span className="success">Gespeichert!</span>}
-    </div>
-  );
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\StatusPage.jsx -----
-import { useEffect, useState } from "react";
-import api from "../api";
-
-export default function StatusPage() {
-  const [status, setStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setLoading(true);
-    setError("");
-    api
-      .get("/status")
-      .then(res => setStatus(res.data))
-      .catch(() => setError("Status konnte nicht geladen werden"))
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading) return <div>Update-Status wird geladen...</div>;
-  if (error) return <div className="error">{error}</div>;
-  if (!status) return <div>Kein Status verfügbar.</div>;
-
-  return (
-    <div>
-      <h1>Update-Status</h1>
-
-      <div className="cards">
-        <div className="card">
-          <h3>Installierte Version</h3>
-          <p className="card-value">
-            {status.installedVersion || "unbekannt"}
-          </p>
-        </div>
-        <div className="card">
-          <h3>Verfügbare Version</h3>
-          <p className="card-value">
-            {status.latestVersion || "unbekannt"}
-          </p>
-        </div>
-        <div className="card">
-          <h3>Letztes Ergebnis</h3>
-          <p className="card-value">
-            {status.lastResult || "–"}
-          </p>
-        </div>
-      </div>
-
-      <h2>Details</h2>
-      <ul className="logs">
-        <li>
-          <strong>Quelle:</strong> {status.lastSource || "–"}
-        </li>
-        <li>
-          <strong>Letzter Check:</strong>{" "}
-          {status.lastCheckedAt || "–"}
-        </li>
-        <li>
-          <strong>Nächster geplanter Check:</strong>{" "}
-          {status.nextCheckAt || "–"}
-        </li>
-        <li>
-          <strong>Rollback möglich:</strong>{" "}
-          {status.rollbackAvailable ? "Ja" : "Nein"}
-        </li>
-        <li>
-          <strong>Health:</strong>{" "}
-          {status.health || "unbekannt"}
-        </li>
-        {status.lastError && (
-          <li>
-            <strong>Fehler:</strong> {status.lastError}
-          </li>
-        )}
-      </ul>
-    </div>
-  );
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\api.js -----
-import axios from "axios";
-
-const api = axios.create({
-  baseURL: "/api"
-});
-
-api.interceptors.request.use(config => {
-  const token = localStorage.getItem("token");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-
-export default api;
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\App.jsx -----
-import { Routes, Route, Navigate } from "react-router-dom";
-import { useAuth } from "./context/AuthContext.jsx";
-import LoginPage from "./pages/LoginPage.jsx";
-import DashboardPage from "./pages/DashboardPage.jsx";
-import LogsPage from "./pages/LogsPage.jsx";
-import ReportsPage from "./pages/ReportsPage.jsx";
-import SettingsPage from "./pages/SettingsPage.jsx";
-import StatusPage from "./pages/StatusPage.jsx"; // NEU
-import Layout from "./components/Layout.jsx";
-
-function PrivateRoute({ children }) {
-  const { user, loading } = useAuth();
-  if (loading) return <div className="center">Lade...</div>;
-  if (!user) return <Navigate to="/login" replace />;
-  return children;
-}
-
-export default function App() {
-  return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/*"
-        element={
-          <PrivateRoute>
-            <Layout>
-              <Routes>
-                <Route path="/" element={<DashboardPage />} />
-                <Route path="/logs" element={<LogsPage />} />
-                <Route path="/reports" element={<ReportsPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/status" element={<StatusPage />} /> {/* NEU */}
-              </Routes>
-            </Layout>
-          </PrivateRoute>
-        }
-      />
-    </Routes>
-  );
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\main.jsx -----
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
-import App from "./App.jsx";
-import { AuthProvider } from "./context/AuthContext.jsx";
-import "./styles.css";
-
-ReactDOM.createRoot(document.getElementById("root")).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
-    </BrowserRouter>
-  </React.StrictMode>
-);
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\styles.css -----
-body {
-    margin: 0;
-    font-family: system-ui, sans-serif;
-    background: #f3f4f6;
-  }
-  
-  .layout {
-    display: flex;
-    min-height: 100vh;
-  }
-  
-  .sidebar {
-    width: 220px;
-    background: #111827;
-    color: white;
-    padding: 1.5rem;
-  }
-  
-  .sidebar h2 {
-    margin-top: 0;
-    margin-bottom: 1.5rem;
-  }
-  
-  .nav-link {
-    display: block;
-    padding: 0.5rem 0.75rem;
-    border-radius: 0.5rem;
-    color: #e5e7eb;
-    text-decoration: none;
-    margin-bottom: 0.25rem;
-  }
-  
-  .nav-link:hover {
-    background: #374151;
-  }
-  
-  .nav-link-active {
-    background: #2563eb;
-    color: white;
-  }
-  
-  .main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-  }
-  
-  .topbar {
-    background: white;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid #e5e7eb;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  
-  .content {
-    padding: 1.5rem;
-  }
-  
-  .cards {
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-  }
-  
-  .card {
-    background: white;
-    padding: 1rem;
-    border-radius: 0.75rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-    min-width: 180px;
-  }
-  
-  .card-value {
-    font-size: 1.5rem;
-    font-weight: bold;
-  }
-  
-  .logs {
-    list-style: none;
-    padding: 0;
-  }
-  
-  .logs li {
-    background: white;
-    padding: 0.5rem 0.75rem;
-    border-radius: 0.5rem;
-    margin-bottom: 0.4rem;
-  }
-  
-  .muted {
-    color: #6b7280;
-    font-size: 0.8rem;
-    margin-left: 0.5rem;
-  }
-  
-  .center {
-    min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-  }
-  
-  .card form,
-  .card {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  
-  label {
-    display: flex;
-    flex-direction: column;
-    font-size: 0.9rem;
-  }
-  
-  input,
-  select {
-    padding: 0.4rem 0.5rem;
-    border-radius: 0.4rem;
-    border: 1px solid #d1d5db;
-  }
-  
-  button {
-    padding: 0.5rem 0.9rem;
-    border-radius: 0.5rem;
-    border: none;
-    background: #2563eb;
-    color: white;
-    cursor: pointer;
-  }
-  
-  button:hover {
-    background: #1d4ed8;
-  }
-  
-  .error {
-    color: #b91c1c;
-  }
-  
-  .success {
-    margin-left: 0.5rem;
-    color: #16a34a;
-  }
-  
-  .form-row {
-    margin-bottom: 0.75rem;
-  }
-  
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\index.html -----
-<!DOCTYPE html>
-<html lang="de">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Customer Dashboard</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\package.json -----
-{
-    "name": "customer-dashboard-frontend",
-    "version": "2.0.0",
-    "private": true,
-    "scripts": {
-      "dev": "vite",
-      "build": "vite build",
-      "preview": "vite preview"
-    },
-    "dependencies": {
-      "axios": "^1.7.0",
-      "react": "^18.3.0",
-      "react-dom": "^18.3.0",
-      "react-router-dom": "^6.27.0"
-    },
-    "devDependencies": {
-      "@vitejs/plugin-react": "^4.0.0",
-      "vite": "^5.0.0"
-    }
-  }
-  
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\vite.config.mjs -----
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-
-export default defineConfig({
-  plugins: [react()],
-  build: {
-    outDir: "dist"
-  }
-});
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\deploy\.env.example -----
-# Welche Version soll gestartet werden?
-APP_VERSION=
-
-# Auf welchem Host-Port soll die App erreichbar sein?
-APP_PORT=8080
-
-# Weitere Settings nach Bedarf...
-NODE_ENV=production
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\deploy\docker-compose.yml -----
-services:
-  dashboard:
-    image: ghcr.io/leoaigner7/customer-dashboard-v2:${APP_VERSION}
-    env_file: .env
-    ports:
-      - "${APP_PORT:-8080}:3000"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 15s
-      retries: 3
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\deploy\install.ps1 -----
-# Customer Dashboard Installer for Windows
-# VERSION 4.1.3 FINAL CLEAN
-
-Param(
-    [string]$ComposeFile = "docker-compose.yml"
-)
-
-Write-Host "=== Customer Dashboard Installer (Windows) ===`n" -ForegroundColor Cyan
-
-# -------------------------------------------------------------
-# 0. ADMIN CHECK
-# -------------------------------------------------------------
-If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(`
-    [Security.Principal.WindowsBuiltInRole] "Administrator"))
-{
-    Write-Host "Dieses Skript muss als ADMINISTRATOR ausgeführt werden!" -ForegroundColor Red
-    Write-Host "Rechtsklick auf PowerShell → 'Als Administrator ausführen'" -ForegroundColor Yellow
-    exit 1
-}
-
-# -------------------------------------------------------------
-# 1. Verzeichnisse bestimmen
-# -------------------------------------------------------------
-
-$deployDir   = $PSScriptRoot
-$packageRoot = Split-Path -Parent $PSScriptRoot
-
-$InstallDir   = "C:\CustomerDashboard"
-$TargetDeploy = "$InstallDir\deploy"
-$TargetDaemon = "$InstallDir\system-daemon"
-$LogDir       = "$InstallDir\logs"
-$TaskName     = "CustomerDashboardAutoUpdater"
-
-Write-Host "Installer liegt in:      $deployDir"
-Write-Host "Paketwurzelverzeichnis: $packageRoot`n"
-
-# -------------------------------------------------------------
-# 2. Installationsverzeichnisse
-# -------------------------------------------------------------
-Write-Host "Erstelle Installationsverzeichnisse..."
-New-Item -ItemType Directory -Force -Path $InstallDir    | Out-Null
-New-Item -ItemType Directory -Force -Path $TargetDeploy  | Out-Null
-New-Item -ItemType Directory -Force -Path $TargetDaemon  | Out-Null
-New-Item -ItemType Directory -Force -Path $LogDir        | Out-Null
-
-# -------------------------------------------------------------
-# 3. Robuster Kopiervorgang (mit Retry)
-# -------------------------------------------------------------
-function Copy-WithRetry($source, $target) {
-    $success = $false
-
-    for ($i = 1; $i -le 5; $i++) {
-        try {
-            Copy-Item -Recurse -Force $source $target
-            $success = $true
-            break
-        } catch {
-            Start-Sleep -Milliseconds 500
-        }
-    }
-
-    if (-not $success) {
-        Write-Host "FEHLER: Kopieren von $source nach $target fehlgeschlagen!" -ForegroundColor Red
-        exit 1
-    }
-}
-
-Write-Host "Kopiere Dateien..."
-Copy-WithRetry "$deployDir\*" $TargetDeploy
-
-if (Test-Path "$deployDir\.env") {
-    Copy-WithRetry "$deployDir\.env" $TargetDeploy
-}
-
-$daemonSource = "$packageRoot\system-daemon"
-if (-not (Test-Path $daemonSource)) {
-    Write-Host "system-daemon wurde nicht gefunden!" -ForegroundColor Red
-    exit 1
-}
-Copy-WithRetry "$daemonSource\*" $TargetDaemon
-
-# -------------------------------------------------------------
-# 4. .env prüfen
-# -------------------------------------------------------------
-$envPath = "$TargetDeploy\.env"
-
-$maxWait = 20
-$envFound = $false
-
-for ($i = 1; $i -le $maxWait; $i++) {
-    if (Test-Path $envPath) {
-        $envFound = $true
-        break
-    }
-    Start-Sleep -Milliseconds 200
-}
-
-if (-not $envFound) {
-    Write-Host "ERROR: .env is not visible in C:\CustomerDashboard\deploy."
-    Write-Host "Files are copied correctly, but filesystem has not released the handle."
-    Write-Host "Stopping installation for safety."
-    exit 1
-}
-
-$envLines = Get-Content $envPath
-$version  = ($envLines | Where-Object { $_ -match '^APP_VERSION=' }) -replace 'APP_VERSION=',''
-$portLine = ($envLines | Where-Object { $_ -match '^APP_PORT=' })
-$port     = if ($portLine) { $portLine -replace 'APP_PORT=','' } else { "8080" }
-
-Write-Host "Version: $version"
-Write-Host "Port:    $port`n"
-
-# -------------------------------------------------------------
-# 5. Docker Compose Pfad
-# -------------------------------------------------------------
-$composeFilePath = Join-Path $TargetDeploy $ComposeFile
-
-if (-not (Test-Path $composeFilePath)) {
-    Write-Host "docker-compose.yml fehlt!" -ForegroundColor Red
-    exit 1
-}
-
-# -------------------------------------------------------------
-# 6. Docker stoppen
-# -------------------------------------------------------------
-Write-Host "Stoppe alte Dashboard-Container..."
-docker compose -f "$composeFilePath" down | Out-Null
-
-# -------------------------------------------------------------
-# 7. Docker starten
-# -------------------------------------------------------------
-Write-Host "⬇ Lade aktuelles Image..."
-docker compose -f "$composeFilePath" pull
-
-Write-Host "Starte Dashboard..."
-docker compose -f "$composeFilePath" up -d
-
-Start-Sleep 10
-
-# -------------------------------------------------------------
-# 8. HTTP-Test
-# -------------------------------------------------------------
-Write-Host "Prüfe Dashboard..."
-
-$uri = "http://localhost:$port/"
-
-try {
-    Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 10 | Out-Null
-    Write-Host "Dashboard erfolgreich gestartet!" -ForegroundColor Green
-} catch {
-    Write-Host "Dashboard läuft, aber HTTP-Test fehlgeschlagen." -ForegroundColor Yellow
-}
-
-# -------------------------------------------------------------
-# 9. Auto-Update Task
-# -------------------------------------------------------------
-Write-Host "Installiere Auto-Update Daemon..."
-
-$nodePath = (Get-Command node.exe).Source
-$daemonPath = "C:\CustomerDashboard\system-daemon\daemon.js"
-$workingDir = "C:\CustomerDashboard\system-daemon"
-
-# Alten Task löschen falls vorhanden
-schtasks /delete /tn "CustomerDashboardAutoUpdater" /f 2>$null
-
-# ACTION
-$action = New-ScheduledTaskAction `
-    -Execute $nodePath `
-    -Argument "`"$daemonPath`"" `
-    -WorkingDirectory $workingDir
-
-# TRIGGER beim Booten
-$triggerBoot = New-ScheduledTaskTrigger -AtStartup
-
-# TRIGGER alle 5 Minuten (gültige Duration!)
-$startTime = (Get-Date).AddMinutes(1).ToString("HH:mm")
-$duration = (New-TimeSpan -Days 3650)  # 10 Jahre gültig
-
-$triggerRepeat = New-ScheduledTaskTrigger `
-    -Once `
-    -At $startTime `
-    -RepetitionInterval (New-TimeSpan -Minutes 5) `
-    -RepetitionDuration $duration
-
-# TASK REGISTRIEREN (SYSTEM)
-Register-ScheduledTask `
-    -TaskName "CustomerDashboardAutoUpdater" `
-    -Action $action `
-    -Trigger $triggerBoot, $triggerRepeat `
-    -RunLevel Highest `
-    -User "SYSTEM"
-
-Write-Host "Auto-Update Daemon installiert (SYSTEM Task)."
-
-
-
-
-# -------------------------------------------------------------
-# 10. Fertig
-# -------------------------------------------------------------
-Write-Host "`nINSTALLATION ABGESCHLOSSEN!" -ForegroundColor Green
-Write-Host "Dashboard: http://localhost:$port/"
-Write-Host "Auto-Update: $TaskName"
-Write-Host "Logs: $LogDir"
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\deploy\install.sh -----
-#!/usr/bin/env bash
-set -euo pipefail
-
-COMPOSE_FILE="${1:-docker-compose.yml}"
-
-echo "=== Customer Dashboard Installer (Linux) ==="
-echo
-
-# -------------------------------------------------------------
-# 0. Pfade
-# -------------------------------------------------------------
-INSTALL_DIR="/opt/customer-dashboard"
-DEPLOY_DIR="$INSTALL_DIR/deploy"
-DAEMON_DIR="$INSTALL_DIR/system-daemon"
-LOG_DIR="$INSTALL_DIR/logs"
-SERVICE_NAME="customer-dashboard-updater"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-echo "Installationsverzeichnis:    $INSTALL_DIR"
-echo "Paketwurzelverzeichnis:      $PACKAGE_ROOT"
-echo
-
-# -------------------------------------------------------------
-# 1. Verzeichnisse anlegen
-# -------------------------------------------------------------
-sudo mkdir -p "$INSTALL_DIR" "$DEPLOY_DIR" "$DAEMON_DIR" "$LOG_DIR"
-
-# -------------------------------------------------------------
-# 2. Dateien kopieren
-# -------------------------------------------------------------
-echo "Kopiere deploy-Dateien..."
-sudo cp -r "$SCRIPT_DIR/"* "$DEPLOY_DIR/"
-
-echo "Kopiere system-daemon..."
-if [ ! -d "$PACKAGE_ROOT/system-daemon" ]; then
-  echo "FEHLER: system-daemon wurde nicht gefunden (erwartet unter $PACKAGE_ROOT/system-daemon)" >&2
-  exit 1
-fi
-sudo cp -r "$PACKAGE_ROOT/system-daemon/"* "$DAEMON_DIR/"
-
-# .env aus .env.example erzeugen, falls nicht vorhanden
-if [ ! -f "$DEPLOY_DIR/.env" ] && [ -f "$DEPLOY_DIR/.env.example" ]; then
-  sudo cp "$DEPLOY_DIR/.env.example" "$DEPLOY_DIR/.env"
-fi
-
-# -------------------------------------------------------------
-# 3. Checks
-# -------------------------------------------------------------
-if ! command -v docker >/dev/null 2>&1; then
-  echo "FEHLER: Docker ist nicht installiert oder nicht im PATH." >&2
-  exit 1
-fi
-
-if [ ! -f "$DEPLOY_DIR/$COMPOSE_FILE" ]; then
-  echo "FEHLER: $COMPOSE_FILE fehlt im deploy-Verzeichnis." >&2
-  exit 1
-fi
-
-if [ ! -f "$DEPLOY_DIR/.env" ]; then
-  echo "FEHLER: .env fehlt im deploy-Verzeichnis." >&2
-  exit 1
-fi
-
-# APP_PORT aus .env lesen
-set +o allexport
-# shellcheck source=/dev/null
-source "$DEPLOY_DIR/.env"
-PORT="${APP_PORT:-8080}"
-
-echo "Verwendete Version aus .env: ${APP_VERSION:-unbekannt}"
-echo "Port:                        ${PORT}"
-echo
-
-# -------------------------------------------------------------
-# 4. Docker Container neu starten
-# -------------------------------------------------------------
-cd "$DEPLOY_DIR"
-
-echo "Stoppe bestehende Container (falls vorhanden)..."
-docker compose -f "$COMPOSE_FILE" down || true
-
-echo "Ziehe aktuelles Image..."
-docker compose -f "$COMPOSE_FILE" pull
-
-echo "Starte Dashboard..."
-docker compose -f "$COMPOSE_FILE" up -d
-
-echo "Warte 10 Sekunden auf Start..."
-sleep 10
-
-# -------------------------------------------------------------
-# 5. Health-Check
-# -------------------------------------------------------------
-URL="http://localhost:${PORT}/"
-
-echo "Prüfe Dashboard unter $URL ..."
-if curl -fsS "$URL" >/dev/null 2>&1; then
-  echo "Dashboard erfolgreich gestartet."
-else
-  echo "WARNUNG: Dashboard läuft evtl. nicht korrekt. HTTP-Check fehlgeschlagen." >&2
-fi
-
-# -------------------------------------------------------------
-# 6. systemd-Service für Auto-Update-Daemon
-# -------------------------------------------------------------
-if [ -f "$DAEMON_DIR/customer-dashboard-updater.service" ]; then
-  echo "Installiere systemd-Service für Auto-Update-Daemon..."
-
-  sudo cp "$DAEMON_DIR/customer-dashboard-updater.service" "$SERVICE_FILE"
-  sudo systemctl daemon-reload
-  sudo systemctl enable "$SERVICE_NAME"
-  sudo systemctl restart "$SERVICE_NAME"
-
-  echo "Auto-Update-Daemon wurde als systemd-Service installiert und gestartet."
-else
-  echo "Hinweis: customer-dashboard-updater.service wurde nicht gefunden, Auto-Update-Dienst wurde NICHT eingerichtet."
-fi
-
-# -------------------------------------------------------------
-# 7. Fertig
-# -------------------------------------------------------------
-echo
-echo "INSTALLATION ABGESCHLOSSEN."
-echo "Dashboard:     $URL"
-echo "Logs:          $LOG_DIR"
-echo "Daemon-Service: $SERVICE_NAME (systemd)"
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\targets\docker-dashboard.js -----
-const fs = require("fs");
-const path = require("path");
-const { spawn } = require("child_process");
-
-/**
- * Einfache Logfunktion; wird auch vom Daemon genutzt.
- * @param {"debug"|"info"|"warn"|"error"} level
- * @param {string} message
- * @param {object} [config]
- * @param {object} [extra]
- */
-function log(level, message, config, extra = undefined) {
-  const logFile =
-    (config && config.logging && config.logging.logFile) ||
-    (config && config.notification && config.notification.logFile) ||
-    "C:\\CustomerDashboard\\logs\\daemon.log";
-
-  const entry = {
-    ts: new Date().toISOString(),
-    level,
-    msg: message,
-    extra
-  };
-
-  const line = JSON.stringify(entry) + "\n";
-  try {
-    fs.mkdirSync(path.dirname(logFile), { recursive: true });
-    fs.appendFileSync(logFile, line);
-  } catch {
-    // Silent fallback to console
-    console.log(`[${entry.ts}] [${level}] ${message}`, extra || "");
-  }
-}
-
-/**
- * Liest die Version aus einer .env Datei.
- */
-function readEnvVersion(config) {
-  const envFile = config.target.envFile;
-  const key = config.target.versionKey || "APP_VERSION";
-
-  if (!fs.existsSync(envFile)) {
-    return null;
-  }
-
-  const lines = fs.readFileSync(envFile, "utf8").split(/\r?\n/);
-  const line = lines.find((l) => l.startsWith(key + "="));
-  if (!line) return null;
-  return line.substring(key.length + 1).trim() || null;
-}
-
-/**
- * Schreibt die Version in eine .env Datei.
- */
-function writeEnvVersion(config, version) {
-  const envFile = config.target.envFile;
-  const key = config.target.versionKey || "APP_VERSION";
-
-  let lines = [];
-  if (fs.existsSync(envFile)) {
-    lines = fs.readFileSync(envFile, "utf8").split(/\r?\n/);
-  }
-
-  let found = false;
-  const newLines = lines.map((line) => {
-    if (line.startsWith(key + "=")) {
-      found = true;
-      return `${key}=${version}`;
-    }
-    return line;
-  });
-
-  if (!found) {
-    newLines.push(`${key}=${version}`);
-  }
-
-  fs.writeFileSync(envFile, newLines.join("\n"), "utf8");
-}
-
-/**
- * Führt ein Docker/Kommando asynchron aus und loggt Ausgabe.
- */
-function runCommand(command, args, options = {}, logFn) {
-  return new Promise((resolve, reject) => {
-    logFn("info", `Starte: ${command} ${args.join(" ")}`);
-    const child = spawn(command, args, { shell: false, ...options });
-
-    let output = "";
-    let errorOutput = "";
-
-    child.stdout.on("data", (data) => {
-      output += data.toString();
-    });
-
-    child.stderr.on("data", (data) => {
-      const t = data.toString();
-      errorOutput += t;
-    });
-
-    child.on("error", (err) => {
-      logFn("error", `Fehler beim Start von ${command}`, { err: err.message });
-      reject(err);
-    });
-
-    child.on("close", (code) => {
-      if (code === 0) {
-        logFn("info", `${command} beendet`, { output: output.trim() });
-        resolve(output);
-      } else {
-        logFn("error", `${command} mit Fehlercode beendet`, {
-          code,
-          stderr: errorOutput.trim()
-        });
-        reject(
-          new Error(
-            `${command} exited with code ${code}: ${errorOutput.trim()}`
-          )
-        );
-      }
-    });
-  });
-}
-
-/**
- * Lädt ein Docker-Image vom Registry (pull).
- */
-async function downloadImage(config, version) {
-  const imageTemplate = config.sources.github.imageTemplate;
-  const image = imageTemplate.replace("{version}", version);
-
-  await runCommand(
-    "docker",
-    ["pull", image],
-    {},
-    (level, msg, extra) => log(level, msg, config, extra)
-  );
-
-  return image;
-}
-
-/**
- * Startet das Dashboard mit docker compose neu (Atomic im Sinne von Pull+Restart).
- */
-async function restartDashboard(config) {
-  const composeFile = config.target.composeFile;
-
-  await runCommand(
-    "docker",
-    ["compose", "-f", composeFile, "down"],
-    {},
-    (level, msg, extra) => log(level, msg, config, extra)
-  );
-
-  await runCommand(
-    "docker",
-    ["compose", "-f", composeFile, "pull"],
-    {},
-    (level, msg, extra) => log(level, msg, config, extra)
-  );
-
-  await runCommand(
-    "docker",
-    ["compose", "-f", composeFile, "up", "-d"],
-    {},
-    (level, msg, extra) => log(level, msg, config, extra)
-  );
-}
-
-/**
- * Healthcheck für das laufende Dashboard über HTTP.
- */
-async function checkHealth(config) {
-  const url = config.target.healthUrl;
-  if (!url) return true;
-
-  return new Promise((resolve) => {
-    const http = url.startsWith("https") ? require("https") : require("http");
-    const req = http.get(url, (res) => {
-      const ok = res.statusCode && res.statusCode >= 200 && res.statusCode < 400;
-      res.resume();
-      resolve(ok);
-    });
-    req.on("error", () => resolve(false));
-    req.setTimeout(8000, () => {
-      req.destroy();
-      resolve(false);
-    });
-  });
-}
-
-module.exports = {
-  log,
-  readEnvVersion,
-  writeEnvVersion,
-  downloadImage,
-  restartDashboard,
-  checkHealth
-};
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\config.example.json -----
-{
-  "mode": "auto-install",
-  "checkIntervalMs": 300000,
-
-  "paths": {
-    "installRoot": "C:\\CustomerDashboard",
-    "stagingDir": "C:\\CustomerDashboard\\staging",
-    "backupDir": "C:\\CustomerDashboard\\backup",
-    "statusFile": "C:\\CustomerDashboard\\logs\\update-status.json"
-  },
-
-  "logging": {
-    "logFile": "C:\\CustomerDashboard\\logs\\daemon.log",
-    "level": "info"
-  },
-
-  "backup": {
-    "enabled": true,
-    "keep": 5
-  },
-
-  "target": {
-    "type": "docker-dashboard",
-    "envFile": "C:\\CustomerDashboard\\deploy\\.env",
-    "versionKey": "APP_VERSION",
-    "composeFile": "C:\\CustomerDashboard\\deploy\\docker-compose.yml",
-    "serviceName": "dashboard",
-    "healthUrl": "http://localhost:8080/"
-  },
-
-  "sources": {
-    "github": {
-      "enabled": true,
-      "apiUrl": "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest",
-      "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}"
-    },
-    "offlineZip": {
-      "enabled": true,
-      "zipPath": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip",
-      "hashFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sha256",
-      "signatureFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sig",
-      "version": null
-    },
-    "networkShare": {
-      "enabled": false,
-      "root": "\\\\fileserver\\releases\\customer-dashboard-v2",
-      "latestFile": "latest.txt"
-    }
-  },
-
-  "security": {
-    "requireHash": true,
-    "requireSignature": false,
-    "publicKeyFile": "C:\\CustomerDashboard\\keys\\public.pem"
-  },
-
-  "selfUpdate": {
-    "enabled": false,
-    "zipUrl": "",
-    "hashUrl": "",
-    "signatureUrl": "",
-    "localZipPath": "C:\\CustomerDashboard\\system-daemon\\daemon-update.zip"
-  },
-
-  "policy": {
-    "pinnedVersion": null,
-    "allowDowngrade": false
-  }
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\config.json -----
-{
-  "mode": "auto-install",
-  "checkIntervalMs": 300000,
-
-  "paths": {
-    "installRoot": "C:\\CustomerDashboard",
-    "stagingDir": "C:\\CustomerDashboard\\staging",
-    "backupDir": "C:\\CustomerDashboard\\backup",
-    "statusFile": "C:\\CustomerDashboard\\logs\\update-status.json"
-  },
-
-  "logging": {
-    "logFile": "C:\\CustomerDashboard\\logs\\daemon.log",
-    "level": "info"
-  },
-
-  "backup": {
-    "enabled": true,
-    "keep": 5
-  },
-
-  "target": {
-    "type": "docker-dashboard",
-    "envFile": "C:\\CustomerDashboard\\deploy\\.env",
-    "versionKey": "APP_VERSION",
-    "composeFile": "C:\\CustomerDashboard\\deploy\\docker-compose.yml",
-    "serviceName": "dashboard",
-    "healthUrl": "http://localhost:8080/"
-  },
-
-  "sources": {
-    "github": {
-      "enabled": true,
-      "apiUrl": "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest",
-      "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}"
-    },
-    "offlineZip": {
-      "enabled": true,
-      "zipPath": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip",
-      "hashFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sha256",
-      "signatureFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sig",
-      "version": null
-    },
-    "networkShare": {
-      "enabled": false,
-      "root": "\\\\fileserver\\releases\\customer-dashboard-v2",
-      "latestFile": "latest.txt"
-    }
-  },
-
-  "security": {
-    "requireHash": true,
-    "requireSignature": false,
-    "publicKeyFile": "C:\\CustomerDashboard\\keys\\public.pem"
-  },
-
-  "selfUpdate": {
-    "enabled": false,
-    "zipUrl": "",
-    "hashUrl": "",
-    "signatureUrl": "",
-    "localZipPath": "C:\\CustomerDashboard\\system-daemon\\daemon-update.zip"
-  },
-
-  "policy": {
-    "pinnedVersion": null,
-    "allowDowngrade": false
-  }
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\customer-dashboard-updater.service -----
-[Unit]
-Description=Customer Dashboard Auto-Update Daemon
-After=network-online.target docker.service
-
-[Service]
-WorkingDirectory=/opt/customer-dashboard/system-daemon
-ExecStart=/usr/bin/node daemon.js
-Restart=always
-RestartSec=5
-User=root
-
-[Install]
-WantedBy=multi-user.target
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\daemon.js -----
-const fs = require("fs");
-const path = require("path");
-const axios = require("axios");
-const AdmZip = require("adm-zip");
-
-const target = require("./targets/docker-dashboard");
-const security = require("./security");
-const { checkAndApplySelfUpdate } = require("./selfUpdate");
-
-const BASE_DIR = __dirname;
-const CONFIG_PATH =
-  process.env.AUTUPDATE_CONFIG ||
-  path.join(BASE_DIR, "config.json");
-
-// -------------------------
-// Config laden
-// -------------------------
-if (!fs.existsSync(CONFIG_PATH)) {
-  console.error("Config nicht gefunden: " + CONFIG_PATH);
-  process.exit(1);
-}
-
-const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-const interval = config.checkIntervalMs || 5 * 60 * 1000;
-
-// kurzer Logger-Wrapper (nutzt target.log)
-function log(level, message, extra) {
-  target.log(level, message, config, extra);
-}
-
-const installRoot = (config.paths && config.paths.installRoot) || "C:\\CustomerDashboard";
-const STATUS_FILE =
-  (config.paths && config.paths.statusFile) ||
-  path.join(installRoot, "logs", "update-status.json");
-
-
-// -------------------------
-// Hilfsfunktionen
-// -------------------------
-
-function writeStatus(partial) {
-  let current = {};
-  try {
-    if (fs.existsSync(STATUS_FILE)) {
-      current = JSON.parse(fs.readFileSync(STATUS_FILE, "utf8"));
-    }
-  } catch {
-    current = {};
-  }
-
-  const updated = {
-    ...current,
-    ...partial,
-    lastUpdate: new Date().toISOString()
-  };
-
-  fs.mkdirSync(path.dirname(STATUS_FILE), { recursive: true });
-  fs.writeFileSync(STATUS_FILE, JSON.stringify(updated, null, 2), "utf8");
-}
-
-function compareSemver(a, b) {
-  if (!a && !b) return 0;
-  if (!a) return -1;
-  if (!b) return 1;
-  const pa = a.split(".").map((n) => parseInt(n, 10));
-  const pb = b.split(".").map((n) => parseInt(n, 10));
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const va = pa[i] || 0;
-    const vb = pb[i] || 0;
-    if (va > vb) return 1;
-    if (va < vb) return -1;
-  }
-  return 0;
-}
-
-// -------------------------
-// Quellen
-// -------------------------
-
-async function getGithubCandidate() {
-  const src = config.sources && config.sources.github;
-  if (!src || !src.enabled || !src.apiUrl) return null;
-
-  try {
-    const res = await axios.get(src.apiUrl, {
-      headers: { "User-Agent": "customer-dashboard-daemon" }
-    });
-
-    // Vereinfachte Annahme: GitHub Release API
-    const tag =
-      res.data.tag_name ||
-      res.data.name ||
-      res.data.version ||
-      null;
-
-    if (!tag) {
-      log("warn", "GitHub-Quelle liefert keine Version.");
-      return null;
-    }
-
-    const version = tag.replace(/^v/i, "");
-    const imageTemplate = src.imageTemplate;
-    const image = imageTemplate
-      ? imageTemplate.replace("{version}", version)
-      : null;
-
-    return {
-      source: "github",
-      version,
-      artifactType: "docker-image",
-      image
-    };
-  } catch (err) {
-    log("warn", "GitHub-Quelle konnte nicht gelesen werden", {
-      error: err.message
-    });
-    return null;
-  }
-}
-
-async function getOfflineZipCandidate() {
-  const src = config.sources && config.sources.offlineZip;
-  if (!src || !src.enabled || !src.zipPath) return null;
-
-  if (!fs.existsSync(src.zipPath)) {
-    return null;
-  }
-
-  let version = src.version || null;
-
-  // Optional: VERSION.txt aus dem ZIP lesen
-  if (!version) {
-    try {
-      const zip = new AdmZip(src.zipPath);
-      const entry = zip.getEntry("VERSION.txt");
-      if (entry) {
-        version = zip.readAsText(entry).trim();
-      }
-    } catch (err) {
-      log("warn", "VERSION.txt aus Offline-ZIP konnte nicht gelesen werden", {
-        error: err.message
-      });
-    }
-  }
-
-  return {
-    source: "offlineZip",
-    version: version || null,
-    artifactType: "zip",
-    zipPath: src.zipPath,
-    hashFile: src.hashFile || null,
-    signatureFile: src.signatureFile || null
-  };
-}
-
-async function getNetworkShareCandidate() {
-  const src = config.sources && config.sources.networkShare;
-  if (!src || !src.enabled || !src.root) return null;
-
-  try {
-    const latestFile = path.join(src.root, src.latestFile || "latest.txt");
-    if (!fs.existsSync(latestFile)) {
-      return null;
-    }
-    const version = fs.readFileSync(latestFile, "utf8").trim();
-    const zipPath = path.join(
-      src.root,
-      `customer-dashboard-v2-${version}.zip`
-    );
-    if (!fs.existsSync(zipPath)) {
-      log("warn", "Netzwerk-Share: ZIP zur Version nicht gefunden", {
-        zipPath
-      });
-      return null;
-    }
-
-    return {
-      source: "networkShare",
-      version,
-      artifactType: "zip",
-      zipPath
-    };
-  } catch (err) {
-    log("warn", "Netzwerk-Share konnte nicht gelesen werden", {
-      error: err.message
-    });
-    return null;
-  }
-}
-
-async function resolveLatestCandidate(currentVersion) {
-  const candidates = [];
-
-  const github = await getGithubCandidate();
-  if (github) candidates.push(github);
-
-  const offline = await getOfflineZipCandidate();
-  if (offline) candidates.push(offline);
-
-  const share = await getNetworkShareCandidate();
-  if (share) candidates.push(share);
-
-  if (candidates.length === 0) return null;
-
-  // Policy: pinnedVersion
-  const pinned = config.policy && config.policy.pinnedVersion;
-
-  let best = null;
-  for (const c of candidates) {
-    let v = c.version || null;
-
-    if (pinned && v && v !== pinned) {
-      // Candidate ignorieren, wenn wir auf bestimmte Version pinnen
-      continue;
-    }
-
-    if (!best) {
-      best = c;
-      continue;
-    }
-
-    const cmp = compareSemver(c.version || "0.0.0", best.version || "0.0.0");
-    if (cmp > 0) {
-      best = c;
-    }
-  }
-
-  if (!best) return null;
-
-  // Downgrade-Policy
-  if (
-    currentVersion &&
-    best.version &&
-    compareSemver(best.version, currentVersion) < 0 &&
-    !(config.policy && config.policy.allowDowngrade)
-  ) {
-    log("info", "Neue Version wäre Downgrade, aufgrund Policy abgelehnt", {
-      currentVersion,
-      candidate: best.version
-    });
-    return null;
-  }
-
-  return best;
-}
-
-// -------------------------
-// Backup & Rollback
-// -------------------------
-
-function cleanupOldBackups(backupDir, keep) {
-  if (!fs.existsSync(backupDir)) return;
-  const entries = fs
-    .readdirSync(backupDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .sort((a, b) => {
-      const at = fs.statSync(path.join(backupDir, a.name)).mtimeMs;
-      const bt = fs.statSync(path.join(backupDir, b.name)).mtimeMs;
-      return bt - at;
-    });
-
-  const toDelete = entries.slice(keep);
-  for (const e of toDelete) {
-    fs.rmSync(path.join(backupDir, e.name), { recursive: true, force: true });
-  }
-}
-
-function createBackup() {
-  if (!config.backup || !config.backup.enabled) {
-    log("debug", "Backups sind deaktiviert.");
-    return null;
-  }
-
-  const root =
-    (config.paths && config.paths.installRoot) ||
-    "C:\\CustomerDashboard";
-  const backupRoot =
-    (config.paths && config.paths.backupDir) ||
-    path.join(root, "backup");
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backupDir = path.join(backupRoot, timestamp);
-
-  fs.mkdirSync(backupDir, { recursive: true });
-
-  // Einfach: kompletten deploy-Ordner sichern
-  const sourceDeploy = path.join(root, "deploy");
-  const targetDeploy = path.join(backupDir, "deploy");
-
-  if (fs.existsSync(sourceDeploy)) {
-    copyRecursive(sourceDeploy, targetDeploy);
-  }
-
-  // Option: system-daemon sichern
-  const sourceDaemon = path.join(root, "system-daemon");
-  const targetDaemon = path.join(backupDir, "system-daemon");
-  if (fs.existsSync(sourceDaemon)) {
-    copyRecursive(sourceDaemon, targetDaemon);
-  }
-
-  const keep = config.backup.keep || 5;
-  cleanupOldBackups(backupRoot, keep);
-
-  log("info", "Backup erstellt", { backupDir });
-  return backupDir;
-}
-
-function restoreBackup(backupDir) {
-  if (!backupDir || !fs.existsSync(backupDir)) {
-    log("warn", "Kein Backup-Verzeichnis zum Wiederherstellen gefunden.", {
-      backupDir
-    });
-    return;
-  }
-
-  const root =
-    (config.paths && config.paths.installRoot) ||
-    "C:\\CustomerDashboard";
-
-  const sourceDeploy = path.join(backupDir, "deploy");
-  const targetDeploy = path.join(root, "deploy");
-  if (fs.existsSync(sourceDeploy)) {
-    fs.rmSync(targetDeploy, { recursive: true, force: true });
-    copyRecursive(sourceDeploy, targetDeploy);
-  }
-
-  const sourceDaemon = path.join(backupDir, "system-daemon");
-  // ⚠️ system-daemon wird NICHT mehr zurückkopiert, um EPERM zu vermeiden
-  if (fs.existsSync(sourceDaemon)) {
-    log("info", "Rollback ignoriert system-daemon (läuft aktiv).", {
-      backupDir
-    });
-  }
-}
-
-
-function copyRecursive(src, dest) {
-  if (!fs.existsSync(src)) return;
-  const stat = fs.statSync(src);
-  if (stat.isDirectory()) {
-    fs.mkdirSync(dest, { recursive: true });
-    for (const entry of fs.readdirSync(src)) {
-      copyRecursive(path.join(src, entry), path.join(dest, entry));
-    }
-  } else {
-    fs.copyFileSync(src, dest);
-  }
-}
-
-// -------------------------
-// Update-Anwendung
-// -------------------------
-
-async function applyZipUpdate(candidate) {
-  const installRoot =
-    (config.paths && config.paths.installRoot) ||
-    "C:\\CustomerDashboard";
-  const stagingDir =
-    (config.paths && config.paths.stagingDir) ||
-    path.join(installRoot, "staging");
-
-  const zipPath = candidate.zipPath;
-
-  // Sicherheitsprüfungen
-  if (config.security && config.security.requireHash && candidate.hashFile) {
-    const expected = fs.readFileSync(candidate.hashFile, "utf8").trim().split(/\s+/)[0];
-    const ok = await security.verifySha256(zipPath, expected);
-    if (!ok) {
-      throw new Error("Hashprüfung für ZIP fehlgeschlagen.");
-    }
-  }
-
-  if (
-    config.security &&
-    config.security.requireSignature &&
-    candidate.signatureFile &&
-    config.security.publicKeyFile
-  ) {
-    const ok = await security.verifySignature(
-      zipPath,
-      candidate.signatureFile,
-      config.security.publicKeyFile
-    );
-    if (!ok) {
-      throw new Error("Signaturprüfung für ZIP fehlgeschlagen.");
-    }
-  }
-
-  log("info", "Entpacke ZIP in Staging-Bereich...", { stagingDir });
-
-  if (fs.existsSync(stagingDir)) {
-    fs.rmSync(stagingDir, { recursive: true, force: true });
-  }
-  fs.mkdirSync(stagingDir, { recursive: true });
-
-  const zip = new AdmZip(zipPath);
-  zip.extractAllTo(stagingDir, true);
-
-  // Hier könntest du einen Staging-Compose oder Teststart machen.
-  // Für Einfachheit: wir ersetzen den deploy-Ordner atomar.
-  const deployCurrent = path.join(installRoot, "deploy");
-  const deployNew = path.join(stagingDir, "deploy");
-
-  if (!fs.existsSync(deployNew)) {
-    throw new Error("ZIP enthält keinen deploy-Ordner.");
-  }
-
-  const deployBackup = deployCurrent + ".old";
-  if (fs.existsSync(deployBackup)) {
-    fs.rmSync(deployBackup, { recursive: true, force: true });
-  }
-
-  if (fs.existsSync(deployCurrent)) {
-    fs.renameSync(deployCurrent, deployBackup);
-  }
-
-  fs.renameSync(deployNew, deployCurrent);
-
-  fs.rmSync(stagingDir, { recursive: true, force: true });
-  if (fs.existsSync(deployBackup)) {
-    fs.rmSync(deployBackup, { recursive: true, force: true });
-  }
-
-  log("info", "ZIP-Update angewendet (Atomic Swap).");
-}
-
-async function applyDockerUpdate(candidate, latestVersion) {
-  log("info", "Wende Docker-Update an...", { candidate });
-
-  // Image ziehen
-  await target.downloadImage(config, latestVersion);
-
-  // Version direkt ins .env schreiben
-  target.writeEnvVersion(config, latestVersion);
-
-  // docker compose down / pull / up -d
-  await target.restartDashboard(config);
-
-  // Healthcheck mehrfach versuchen (z.B. 10x alle 2 Sekunden)
-  let ok = false;
-  for (let i = 0; i < 10; i++) {
-    ok = await target.checkHealth(config);
-    if (ok) break;
-    await new Promise((res) => setTimeout(res, 2000));
-  }
-
-  if (!ok) {
-    throw new Error(
-      "Healthcheck nach Docker-Update fehlgeschlagen (extended timeout)."
-    );
-  }
-
-  log("info", "Docker-Update erfolgreich angewendet.", {
-    version: latestVersion
-  });
-}
-
-
-
-// -------------------------
-// Haupt-Update-Check
-// -------------------------
-
-async function checkOnce() {
-  const startedAt = new Date().toISOString();
-  log("info", "=== Update-Check gestartet ===");
-
-  try {
-    const currentVersion = target.readEnvVersion(config) || null;
-    log("info", "Aktuell installierte Version: " + (currentVersion || "(unbekannt)"));
-
-    const candidate = await resolveLatestCandidate(currentVersion);
-
-    if (!candidate || !candidate.version) {
-      log("info", "Keine neuere Version gefunden.");
-      writeStatus({
-        currentVersion,
-        latestVersion: currentVersion,
-        lastResult: "no-update",
-        lastSource: candidate ? candidate.source : null,
-        lastError: null,
-        lastCheckedAt: startedAt
-      });
-      return;
-    }
-
-    const cmp = compareSemver(candidate.version, currentVersion || "0.0.0");
-    if (cmp <= 0 && !(config.policy && config.policy.allowDowngrade)) {
-      log("info", "Kandidat ist nicht neuer als aktuelle Version.", {
-        candidate: candidate.version,
-        current: currentVersion
-      });
-      writeStatus({
-        currentVersion,
-        latestVersion: candidate.version,
-        lastResult: "no-update",
-        lastSource: candidate.source,
-        lastError: null,
-        lastCheckedAt: startedAt
-      });
-      return;
-    }
-
-    log("info", "Neues Update gefunden", {
-      source: candidate.source,
-      version: candidate.version,
-      type: candidate.artifactType
-    });
-
-    const backupDir = createBackup();
-
-    try {
-      if (candidate.artifactType === "zip") {
-        await applyZipUpdate(candidate);
-        // Version ins .env schreiben, falls Candidate eine Version hat
-        if (candidate.version) {
-          target.writeEnvVersion(config, candidate.version);
-        }
-        await target.restartDashboard(config);
-      } else if (candidate.artifactType === "docker-image") {
-        await applyDockerUpdate(candidate, candidate.version);
-      }
-
-      const ok = await target.checkHealth(config);
-      if (!ok) {
-        log("warn", "Healthcheck nach Update meldet noch nicht OK, Update aber bereits angewendet.");
-      }
-
-
-      log("info", "Update erfolgreich abgeschlossen.", {
-        newVersion: candidate.version
-      });
-
-      writeStatus({
-        currentVersion: candidate.version,
-        latestVersion: candidate.version,
-        lastResult: "success",
-        lastSource: candidate.source,
-        lastError: null,
-        lastCheckedAt: startedAt
-      });
-    } catch (err) {
-      log("error", "Fehler beim Anwenden des Updates", {
-        error: err.message
-      });
-
-      if (config.backup && config.backup.enabled && backupDir) {
-        log("warn", "Rolle auf Backup zurück...", { backupDir });
-        try {
-          restoreBackup(backupDir);
-          await target.restartDashboard(config);
-          writeStatus({
-            currentVersion,
-            latestVersion: candidate.version,
-            lastResult: "rollback",
-            lastSource: candidate.source,
-            lastError: err.message,
-            lastCheckedAt: startedAt
-          });
-        } catch (rollbackErr) {
-          log("error", "Rollback ebenfalls fehlgeschlagen", {
-            error: rollbackErr.message
-          });
-          writeStatus({
-            currentVersion,
-            latestVersion: candidate.version,
-            lastResult: "failed-rollback",
-            lastSource: candidate.source,
-            lastError: rollbackErr.message,
-            lastCheckedAt: startedAt
-          });
-        }
-      } else {
-        writeStatus({
-          currentVersion,
-          latestVersion: candidate.version,
-          lastResult: "failed",
-          lastSource: candidate.source,
-          lastError: err.message,
-          lastCheckedAt: startedAt
-        });
-      }
-    }
-  } catch (e) {
-    log("error", "Unerwarteter Fehler beim Update-Check", {
-      error: e.message
-    });
-  }
-}
-
-// -------------------------
-// Main
-// -------------------------
-
-async function main() {
-  log("info", "Systemweiter Auto-Update-Daemon gestartet.");
-
-  // Optional: Self-Update des Daemons
-  await checkAndApplySelfUpdate(config, log, security);
-
-  await checkOnce();
-
-  setInterval(checkOnce, interval);
-}
-
-main().catch((err) => {
-  log("error", "Daemon konnte nicht gestartet werden", { error: err.message });
-  process.exit(1);
-});
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\package-lock.json -----
-{
-  "name": "system-daemon",
-  "version": "1.0.0",
-  "lockfileVersion": 3,
-  "requires": true,
-  "packages": {
-    "": {
-      "name": "system-daemon",
-      "version": "1.0.0",
-      "license": "ISC",
-      "dependencies": {
-        "adm-zip": "^0.5.16",
-        "axios": "^1.13.2"
-      }
-    },
-    "node_modules/adm-zip": {
-      "version": "0.5.16",
-      "resolved": "https://registry.npmjs.org/adm-zip/-/adm-zip-0.5.16.tgz",
-      "integrity": "sha512-TGw5yVi4saajsSEgz25grObGHEUaDrniwvA2qwSC060KfqGPdglhvPMA2lPIoxs3PQIItj2iag35fONcQqgUaQ==",
-      "license": "MIT",
-      "engines": {
-        "node": ">=12.0"
-      }
-    },
-    "node_modules/asynckit": {
-      "version": "0.4.0",
-      "resolved": "https://registry.npmjs.org/asynckit/-/asynckit-0.4.0.tgz",
-      "integrity": "sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==",
-      "license": "MIT"
-    },
-    "node_modules/axios": {
-      "version": "1.13.2",
-      "resolved": "https://registry.npmjs.org/axios/-/axios-1.13.2.tgz",
-      "integrity": "sha512-VPk9ebNqPcy5lRGuSlKx752IlDatOjT9paPlm8A7yOuW2Fbvp4X3JznJtT4f0GzGLLiWE9W8onz51SqLYwzGaA==",
-      "license": "MIT",
-      "dependencies": {
-        "follow-redirects": "^1.15.6",
-        "form-data": "^4.0.4",
-        "proxy-from-env": "^1.1.0"
-      }
-    },
-    "node_modules/call-bind-apply-helpers": {
-      "version": "1.0.2",
-      "resolved": "https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz",
-      "integrity": "sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==",
-      "license": "MIT",
-      "dependencies": {
-        "es-errors": "^1.3.0",
-        "function-bind": "^1.1.2"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/combined-stream": {
-      "version": "1.0.8",
-      "resolved": "https://registry.npmjs.org/combined-stream/-/combined-stream-1.0.8.tgz",
-      "integrity": "sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==",
-      "license": "MIT",
-      "dependencies": {
-        "delayed-stream": "~1.0.0"
-      },
-      "engines": {
-        "node": ">= 0.8"
-      }
-    },
-    "node_modules/delayed-stream": {
-      "version": "1.0.0",
-      "resolved": "https://registry.npmjs.org/delayed-stream/-/delayed-stream-1.0.0.tgz",
-      "integrity": "sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ==",
-      "license": "MIT",
-      "engines": {
-        "node": ">=0.4.0"
-      }
-    },
-    "node_modules/dunder-proto": {
-      "version": "1.0.1",
-      "resolved": "https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz",
-      "integrity": "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==",
-      "license": "MIT",
-      "dependencies": {
-        "call-bind-apply-helpers": "^1.0.1",
-        "es-errors": "^1.3.0",
-        "gopd": "^1.2.0"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/es-define-property": {
-      "version": "1.0.1",
-      "resolved": "https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz",
-      "integrity": "sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/es-errors": {
-      "version": "1.3.0",
-      "resolved": "https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz",
-      "integrity": "sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/es-object-atoms": {
-      "version": "1.1.1",
-      "resolved": "https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.1.tgz",
-      "integrity": "sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==",
-      "license": "MIT",
-      "dependencies": {
-        "es-errors": "^1.3.0"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/es-set-tostringtag": {
-      "version": "2.1.0",
-      "resolved": "https://registry.npmjs.org/es-set-tostringtag/-/es-set-tostringtag-2.1.0.tgz",
-      "integrity": "sha512-j6vWzfrGVfyXxge+O0x5sh6cvxAog0a/4Rdd2K36zCMV5eJ+/+tOAngRO8cODMNWbVRdVlmGZQL2YS3yR8bIUA==",
-      "license": "MIT",
-      "dependencies": {
-        "es-errors": "^1.3.0",
-        "get-intrinsic": "^1.2.6",
-        "has-tostringtag": "^1.0.2",
-        "hasown": "^2.0.2"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/follow-redirects": {
-      "version": "1.15.11",
-      "resolved": "https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.15.11.tgz",
-      "integrity": "sha512-deG2P0JfjrTxl50XGCDyfI97ZGVCxIpfKYmfyrQ54n5FO/0gfIES8C/Psl6kWVDolizcaaxZJnTS0QSMxvnsBQ==",
-      "funding": [
-        {
-          "type": "individual",
-          "url": "https://github.com/sponsors/RubenVerborgh"
-        }
-      ],
-      "license": "MIT",
-      "engines": {
-        "node": ">=4.0"
-      },
-      "peerDependenciesMeta": {
-        "debug": {
-          "optional": true
-        }
-      }
-    },
-    "node_modules/form-data": {
-      "version": "4.0.5",
-      "resolved": "https://registry.npmjs.org/form-data/-/form-data-4.0.5.tgz",
-      "integrity": "sha512-8RipRLol37bNs2bhoV67fiTEvdTrbMUYcFTiy3+wuuOnUog2QBHCZWXDRijWQfAkhBj2Uf5UnVaiWwA5vdd82w==",
-      "license": "MIT",
-      "dependencies": {
-        "asynckit": "^0.4.0",
-        "combined-stream": "^1.0.8",
-        "es-set-tostringtag": "^2.1.0",
-        "hasown": "^2.0.2",
-        "mime-types": "^2.1.12"
-      },
-      "engines": {
-        "node": ">= 6"
-      }
-    },
-    "node_modules/function-bind": {
-      "version": "1.1.2",
-      "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
-      "integrity": "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==",
-      "license": "MIT",
-      "funding": {
-        "url": "https://github.com/sponsors/ljharb"
-      }
-    },
-    "node_modules/get-intrinsic": {
-      "version": "1.3.0",
-      "resolved": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
-      "integrity": "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==",
-      "license": "MIT",
-      "dependencies": {
-        "call-bind-apply-helpers": "^1.0.2",
-        "es-define-property": "^1.0.1",
-        "es-errors": "^1.3.0",
-        "es-object-atoms": "^1.1.1",
-        "function-bind": "^1.1.2",
-        "get-proto": "^1.0.1",
-        "gopd": "^1.2.0",
-        "has-symbols": "^1.1.0",
-        "hasown": "^2.0.2",
-        "math-intrinsics": "^1.1.0"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      },
-      "funding": {
-        "url": "https://github.com/sponsors/ljharb"
-      }
-    },
-    "node_modules/get-proto": {
-      "version": "1.0.1",
-      "resolved": "https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz",
-      "integrity": "sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==",
-      "license": "MIT",
-      "dependencies": {
-        "dunder-proto": "^1.0.1",
-        "es-object-atoms": "^1.0.0"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/gopd": {
-      "version": "1.2.0",
-      "resolved": "https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz",
-      "integrity": "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.4"
-      },
-      "funding": {
-        "url": "https://github.com/sponsors/ljharb"
-      }
-    },
-    "node_modules/has-symbols": {
-      "version": "1.1.0",
-      "resolved": "https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz",
-      "integrity": "sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.4"
-      },
-      "funding": {
-        "url": "https://github.com/sponsors/ljharb"
-      }
-    },
-    "node_modules/has-tostringtag": {
-      "version": "1.0.2",
-      "resolved": "https://registry.npmjs.org/has-tostringtag/-/has-tostringtag-1.0.2.tgz",
-      "integrity": "sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==",
-      "license": "MIT",
-      "dependencies": {
-        "has-symbols": "^1.0.3"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      },
-      "funding": {
-        "url": "https://github.com/sponsors/ljharb"
-      }
-    },
-    "node_modules/hasown": {
-      "version": "2.0.2",
-      "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.2.tgz",
-      "integrity": "sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==",
-      "license": "MIT",
-      "dependencies": {
-        "function-bind": "^1.1.2"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/math-intrinsics": {
-      "version": "1.1.0",
-      "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
-      "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/mime-db": {
-      "version": "1.52.0",
-      "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz",
-      "integrity": "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.6"
-      }
-    },
-    "node_modules/mime-types": {
-      "version": "2.1.35",
-      "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
-      "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
-      "license": "MIT",
-      "dependencies": {
-        "mime-db": "1.52.0"
-      },
-      "engines": {
-        "node": ">= 0.6"
-      }
-    },
-    "node_modules/proxy-from-env": {
-      "version": "1.1.0",
-      "resolved": "https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-1.1.0.tgz",
-      "integrity": "sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg==",
-      "license": "MIT"
-    }
-  }
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\package.json -----
-{
-  "name": "system-daemon",
-  "version": "1.0.0",
-  "main": "daemon.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "dependencies": {
-    "adm-zip": "^0.5.16",
-    "axios": "^1.13.2"
-  }
-}
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\security.js -----
-const fs = require("fs");
-const crypto = require("crypto");
-
-/**
- * Berechnet SHA256-Hash einer Datei.
- * @param {string} filePath
- * @returns {Promise<string>} hex-Hash
- */
-function sha256(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash("sha256");
-    const stream = fs.createReadStream(filePath);
-
-    stream.on("error", reject);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("end", () => resolve(hash.digest("hex")));
-  });
-}
-
-/**
- * Prüft, ob der SHA256-Hash einer Datei dem erwarteten Hash entspricht.
- * @param {string} filePath
- * @param {string} expectedHash
- * @returns {Promise<boolean>}
- */
-async function verifySha256(filePath, expectedHash) {
-  const actual = await sha256(filePath);
-  return actual.toLowerCase() === expectedHash.toLowerCase();
-}
-
-/**
- * Prüft eine RSA-Signatur für eine Datei.
- * @param {string} filePath
- * @param {string} signatureFile
- * @param {string} publicKeyFile
- * @returns {Promise<boolean>}
- */
-async function verifySignature(filePath, signatureFile, publicKeyFile) {
-  const publicKey = fs.readFileSync(publicKeyFile, "utf8");
-  const signature = fs.readFileSync(signatureFile);
-
-  const verify = crypto.createVerify("RSA-SHA256");
-  const stream = fs.createReadStream(filePath);
-
-  return new Promise((resolve, reject) => {
-    stream.on("error", reject);
-    stream.on("data", (chunk) => verify.update(chunk));
-    stream.on("end", () => {
-      try {
-        const ok = verify.verify(publicKey, signature);
-        resolve(ok);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  });
-}
-
-module.exports = {
-  sha256,
-  verifySha256,
-  verifySignature
-};
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\selfUpdate.js -----
-const fs = require("fs");
-const path = require("path");
-const axios = require("axios");
-const AdmZip = require("adm-zip");
-
-/**
- * Lädt eine Datei per HTTP/S herunter.
- * @param {string} url
- * @param {string} dest
- */
-async function downloadFile(url, dest) {
-  const writer = fs.createWriteStream(dest);
-
-  const res = await axios.get(url, { responseType: "stream" });
-  return new Promise((resolve, reject) => {
-    res.data.pipe(writer);
-    let finished = false;
-    writer.on("finish", () => {
-      if (!finished) {
-        finished = true;
-        resolve();
-      }
-    });
-    writer.on("error", (err) => {
-      if (!finished) {
-        finished = true;
-        reject(err);
-      }
-    });
-  });
-}
-
-/**
- * Wendet ein Self-Update für den Daemon an, falls konfiguriert.
- * Diese Funktion ist bewusst defensiv: wenn etwas schief geht, wird nur geloggt.
- */
-async function checkAndApplySelfUpdate(config, logger, security) {
-  if (!config.selfUpdate || !config.selfUpdate.enabled) {
-    return;
-  }
-
-  const { zipUrl, localZipPath } = config.selfUpdate;
-  if (!zipUrl && !localZipPath) {
-    return;
-  }
-
-  const baseDir = __dirname;
-  const currentDir = baseDir;
-  const stagingDir = path.join(baseDir, "..", "system-daemon.new");
-  const backupDir = path.join(baseDir, "..", "system-daemon.bak");
-  const zipPath =
-    localZipPath || path.join(baseDir, "daemon-update.zip");
-
-  try {
-    logger("info", "Prüfe auf Self-Update des Daemons...");
-
-    if (zipUrl) {
-      logger("info", `Lade Daemon-Update von ${zipUrl}...`);
-      await downloadFile(zipUrl, zipPath);
-    } else if (!fs.existsSync(zipPath)) {
-      logger("debug", "Kein Self-Update ZIP gefunden, überspringe.");
-      return;
-    }
-
-    // Optional: Hash- / Signaturprüfung
-    if (config.security && config.security.requireHash && config.selfUpdate.hashUrl) {
-      const hashRes = await axios.get(config.selfUpdate.hashUrl, { responseType: "text" });
-      const expectedHash = hashRes.data.trim().split(/\s+/)[0];
-      const ok = await security.verifySha256(zipPath, expectedHash);
-      if (!ok) {
-        logger("error", "Self-Update Hashprüfung fehlgeschlagen, breche ab.");
-        return;
-      }
-    }
-
-    if (config.security && config.security.requireSignature && config.selfUpdate.signatureUrl) {
-      const signaturePath = zipPath + ".sig";
-      const sigRes = await axios.get(config.selfUpdate.signatureUrl, { responseType: "arraybuffer" });
-      fs.writeFileSync(signaturePath, Buffer.from(sigRes.data));
-      const ok = await security.verifySignature(
-        zipPath,
-        signaturePath,
-        config.security.publicKeyFile
-      );
-      if (!ok) {
-        logger("error", "Self-Update Signaturprüfung fehlgeschlagen, breche ab.");
-        return;
-      }
-    }
-
-    logger("info", "Entpacke Self-Update ZIP in Staging...");
-    if (fs.existsSync(stagingDir)) {
-      fs.rmSync(stagingDir, { recursive: true, force: true });
-    }
-    fs.mkdirSync(stagingDir, { recursive: true });
-
-    const zip = new AdmZip(zipPath);
-    zip.extractAllTo(stagingDir, true);
-
-    // Atomic Swap: aktuelles system-daemon verschieben, neues an seine Stelle.
-    logger("info", "Wende Self-Update atomar an...");
-
-    if (fs.existsSync(backupDir)) {
-      fs.rmSync(backupDir, { recursive: true, force: true });
-    }
-
-    fs.renameSync(currentDir, backupDir);
-    fs.renameSync(stagingDir, currentDir);
-
-    logger("info", "Self-Update des Daemons wurde vorbereitet. Neuer Code wird beim nächsten Start aktiv.");
-
-  } catch (err) {
-    logger("error", "Fehler beim Self-Update des Daemons", { error: err.message });
-  }
-}
-
-module.exports = {
-  checkAndApplySelfUpdate
-};
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\.dockerignore -----
+===== FILE: C:\Users\leoa\customer-dashboard-v2\.dockerignore =====
 node_modules
 **/node_modules
 npm-debug.log
@@ -3269,40 +10,8 @@ Dockerfile
 dist
 
 
------ FILE: C:\Users\leoa\customer-dashboard-v2\.gitignore -----
-# Dependencies
-app/frontend/node_modules/
-app/backend/node_modules/
 
-# Build Output
-app/frontend/dist/
-app/backend/dist/
-dist/
-build/
-
-# Lock files
-app/frontend/package-lock.json
-app/backend/package-lock.json
-package-lock.json
-
-# Environment
-*.env
-deploy/.env
-
-# IDE
-.idea/
-.vscode/
-*.iml
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
-
-
------ FILE: C:\Users\leoa\customer-dashboard-v2\Dockerfile -----
+===== FILE: C:\Users\leoa\customer-dashboard-v2\Dockerfile =====
 # 1) FRONTEND BUILD
 FROM node:20 AS frontend-build
 WORKDIR /app/frontend
@@ -3339,7 +48,8 @@ EXPOSE 3000
 CMD ["node", "server.js"]
 
 
------ FILE: C:\Users\leoa\customer-dashboard-v2\package-lock.json -----
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\package-lock.json =====
 {
   "name": "customer-dashboard-v2",
   "lockfileVersion": 3,
@@ -3643,7 +353,8 @@ CMD ["node", "server.js"]
 }
 
 
------ FILE: C:\Users\leoa\customer-dashboard-v2\package.json -----
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\package.json =====
 {
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -3652,14 +363,16 @@ CMD ["node", "server.js"]
 }
 
 
------ FILE: C:\Users\leoa\customer-dashboard-v2\README.md -----
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\README.md =====
 <<<<<<< HEAD
 =======
 # customer-dashboard
 >>>>>>> feature/system-daemon
 
 
------ FILE: C:\Users\leoa\customer-dashboard-v2\struktur.txt -----
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\struktur.txt =====
 Auflistung der Ordnerpfade f�r Volume Windows
 Volumeseriennummer : 0EA6-1EC9
 C:.
@@ -9944,7 +6657,3217 @@ C:.
             
 
 
------ FILE: C:\Users\leoa\customer-dashboard-v2\VERSION.txt -----
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\VERSION.txt =====
 4.1.9
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\auth.js =====
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const db = require("./db");
+
+const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
+const TOKEN_EXPIRES = "8h";
+
+function signUser(user) {
+  return jwt.sign(
+    {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    },
+    JWT_SECRET,
+    { expiresIn: TOKEN_EXPIRES }
+  );
+}
+
+function authMiddleware(requiredRole = null) {
+  return (req, res, next) => {
+    const auth = req.headers.authorization;
+
+    if (!auth || !auth.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Token fehlt" });
+    }
+
+    const token = auth.replace("Bearer ", "");
+
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      req.user = decoded;
+
+      if (requiredRole && decoded.role !== requiredRole) {
+        return res.status(403).json({ error: "Keine Berechtigung" });
+      }
+
+      next();
+    } catch {
+      return res.status(401).json({ error: "Ungültiger Token" });
+    }
+  };
+}
+
+// LOGIN ENDPOINT — wird jetzt in server.js eingebunden
+async function handleLogin(req, res) {
+  const { email, password } = req.body;
+
+  try {
+    const user = db
+      .prepare("SELECT * FROM users WHERE email = ?")
+      .get(email);
+
+    if (!user) {
+      return res.status(401).json({ error: "Ungültige Login-Daten" });
+    }
+
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) {
+      return res.status(401).json({ error: "Ungültige Login-Daten" });
+    }
+
+    const token = signUser(user);
+
+    res.json({
+      token,
+      user: {
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: "Login fehlgeschlagen",
+      detail: err.message,
+    });
+  }
+}
+
+module.exports = {
+  handleLogin,
+  authMiddleware,
+  signUser,
+};
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\db.js =====
+const Database = require("better-sqlite3");
+const path = require("path");
+const fs = require("fs");
+
+const DB_PATH =
+  process.env.DB_PATH ||
+  path.join(__dirname, "database.db");
+
+const db = new Database(DB_PATH);
+
+// Tabellen anlegen, falls nicht vorhanden
+db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT DEFAULT 'user',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT UNIQUE NOT NULL,
+  value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  level TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Optional für Status-Langzeitspeicherung:
+CREATE TABLE IF NOT EXISTS update_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version TEXT,
+  source TEXT,
+  result TEXT,
+  error TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+`);
+
+// Seed-Admin erzeugen, wenn noch keiner existiert
+const adminExists = db
+  .prepare("SELECT COUNT(*) AS count FROM users WHERE role='admin'")
+  .get().count;
+
+if (!adminExists) {
+  const bcrypt = require("bcryptjs");
+  const password = bcrypt.hashSync("admin123", 10);
+
+  db.prepare(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('admin@example.com', ?, 'admin')`
+  ).run(password);
+
+  console.log("Seed-Admin erzeugt: admin@example.com / admin123");
+}
+
+module.exports = db;
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\package.json =====
+{
+    "name": "customer-dashboard-backend",
+    "version": "2.0.0",
+    "main": "src/server.js",
+    "scripts": {
+      "start": "node src/server.js",
+      "dev": "nodemon src/server.js"
+    },
+    "dependencies": {
+      "bcryptjs": "^2.4.3",
+      "cors": "^2.8.5",
+      "dotenv": "^16.4.0",
+      "express": "^4.19.0",
+      "jsonwebtoken": "^9.0.2",
+      "better-sqlite3": "^9.0.0"
+    },
+    "devDependencies": {
+      "nodemon": "^3.1.0"
+    }
+  }
+  
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\server.js =====
+require("dotenv").config();
+
+const express = require("express");
+const cors = require("cors");
+const path = require("path");
+
+// AUTH — bleibt an Ort & Stelle
+const { handleLogin, authMiddleware } = require("./auth");
+
+// ROUTES
+const dashboardRouter = require("./routes/dashboard");
+const logsRouter = require("./routes/logs");
+const settingsRouter = require("./routes/settings");
+const usersRouter = require("./routes/users");
+const statusRouter = require("./routes/status");
+const versionRouter = require("./routes/version");
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
+// ----------------------------
+// AUTH ROUTE (NEU!!!)
+// ----------------------------
+app.post("/api/auth/login", handleLogin);
+
+// Optional — Token-Check für private APIs:
+// app.use("/api/*", authMiddleware());
+
+// ----------------------------
+// API ROUTES
+// ----------------------------
+app.use("/api/dashboard", dashboardRouter);
+app.use("/api/logs", logsRouter);
+app.use("/api/settings", settingsRouter);
+app.use("/api/users", usersRouter);
+app.use("/api/status", statusRouter);
+app.use("/api/version", versionRouter);
+
+// HEALTHCHECK
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// ----------------------------
+// STATIC REACT BUILD
+// ----------------------------
+const publicPath = path.join(__dirname, "public");
+app.use(express.static(publicPath));
+
+// ----------------------------
+// SPA FALLBACK
+// ----------------------------
+app.get("*", (req, res) => {
+  res.sendFile(path.join(publicPath, "index.html"));
+});
+
+// ----------------------------
+// SERVER START
+// ----------------------------
+const PORT = 3000;
+app.listen(PORT, () => {
+  console.log(`Backend läuft auf Port ${PORT}`);
+});
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\dashboard.js =====
+const express = require("express");
+const db = require("../db");
+const router = express.Router();
+
+router.get("/", (req, res) => {
+  // Beispielkarten
+  const cards = [
+    { id: 1, title: "Benutzer", value: db.prepare("SELECT COUNT(*) AS c FROM users").get().c },
+    { id: 2, title: "Logs", value: db.prepare("SELECT COUNT(*) AS c FROM logs").get().c }
+  ];
+
+  // Letzte 5 Logs
+  const recentLogs = db.prepare(
+    "SELECT level, message, created_at FROM logs ORDER BY id DESC LIMIT 5"
+  ).all();
+
+  res.json({
+    cards,
+    recentLogs
+  });
+});
+
+module.exports = router;
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\logs.js =====
+const express = require("express");
+const db = require("../db");
+
+const router = express.Router();
+
+// GET /api/logs
+router.get("/", async (req, res) => {
+  try {
+    const { limit = 200, level, since } = req.query;
+
+    let query = `SELECT id, level, message, created_at FROM logs`;
+    const params = [];
+
+    if (level) {
+      query += " WHERE level = ?";
+      params.push(level);
+    }
+
+    if (since) {
+      query += level ? " AND created_at > ?" : " WHERE created_at > ?";
+      params.push(since);
+    }
+
+    query += " ORDER BY created_at DESC LIMIT ?";
+    params.push(parseInt(limit, 10));
+
+    const rows = db.prepare(query).all(...params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "Logabfrage fehlgeschlagen", detail: err.message });
+  }
+});
+
+// POST /api/logs
+router.post("/", (req, res) => {
+  try {
+    const { level = "info", message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: "message fehlt" });
+    }
+
+    db.prepare(
+      `INSERT INTO logs (level, message, created_at)
+       VALUES (?, ?, datetime('now'))`
+    ).run(level, message);
+
+    res.json({ status: "ok" });
+  } catch (err) {
+    res.status(500).json({ error: "Log konnte nicht gespeichert werden", detail: err.message });
+  }
+});
+
+module.exports = router;
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\settings.js =====
+const express = require("express");
+const db = require("../db");
+const { authMiddleware } = require("../auth");
+
+const router = express.Router();
+
+// GET /api/settings → Alle Settings abrufen
+router.get("/", authMiddleware("admin"), (req, res) => {
+  try {
+    const rows = db.prepare("SELECT key, value FROM settings").all();
+    const map = {};
+    rows.forEach((r) => {
+      map[r.key] = r.value;
+    });
+
+    res.json(map);
+  } catch (err) {
+    res.status(500).json({ error: "Settings konnten nicht geladen werden", detail: err.message });
+  }
+});
+
+// POST /api/settings → Setting setzen
+router.post("/", authMiddleware("admin"), (req, res) => {
+  const { key, value } = req.body;
+
+  if (!key) {
+    return res.status(400).json({ error: "key fehlt" });
+  }
+
+  try {
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+    `).run(key, value);
+
+    res.json({ status: "ok" });
+  } catch (err) {
+    res.status(500).json({ error: "Fehler beim Speichern", detail: err.message });
+  }
+});
+
+// Spezialrouten für Update-Policy
+router.post("/policy", authMiddleware("admin"), (req, res) => {
+  const { pinnedVersion, allowDowngrade } = req.body;
+
+  try {
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES ('pinnedVersion', ?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+    `).run(pinnedVersion || null);
+
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES ('allowDowngrade', ?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+    `).run(String(!!allowDowngrade));
+
+    res.json({ status: "ok" });
+  } catch (err) {
+    res.status(500).json({ error: "Fehler beim Speichern der Policy", detail: err.message });
+  }
+});
+
+module.exports = router;
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\status.js =====
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
+
+const router = express.Router();
+
+// Pfad des Statusfiles aus dem Daemon
+const DEFAULT_STATUS_FILE =
+  "C:\\CustomerDashboard\\logs\\update-status.json";
+
+// Unterstützt Linux & Windows
+function getStatusFilePath() {
+  if (process.env.STATUS_FILE) {
+    return process.env.STATUS_FILE;
+  }
+  return DEFAULT_STATUS_FILE;
+}
+
+// API: GET /api/status
+router.get("/", (req, res) => {
+  const statusFile = getStatusFilePath();
+
+  let data = {
+    installedVersion: null,
+    latestVersion: null,
+    lastResult: null,
+    lastSource: null,
+    lastError: null,
+    lastCheckedAt: null,
+    nextCheckAt: null,
+    rollbackAvailable: null,
+    health: null,
+  };
+
+  try {
+    if (fs.existsSync(statusFile)) {
+      const raw = fs.readFileSync(statusFile, "utf8");
+      const parsed = JSON.parse(raw);
+
+      data.installedVersion = parsed.currentVersion || null;
+      data.latestVersion = parsed.latestVersion || null;
+      data.lastResult = parsed.lastResult || null;
+      data.lastSource = parsed.lastSource || null;
+      data.lastError = parsed.lastError || null;
+      data.lastCheckedAt = parsed.lastCheckedAt || null;
+      data.rollbackAvailable =
+        parsed.lastResult === "rollback" ||
+        parsed.lastResult === "failed-rollback";
+
+      // Nächster gepl. Lauf berechnen
+      const interval =
+        parseInt(process.env.DAEMON_INTERVAL_MS || "300000", 10) || 300000;
+      if (parsed.lastCheckedAt) {
+        const next = new Date(Date.parse(parsed.lastCheckedAt) + interval);
+        data.nextCheckAt = next.toISOString();
+      }
+
+      // Health Information
+      data.health = parsed.health || "unknown";
+    }
+  } catch (err) {
+    return res.status(500).json({
+      error: "Statusfile konnte nicht gelesen werden.",
+      detail: err.message,
+    });
+  }
+
+  res.json(data);
+});
+
+module.exports = router;
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\users.js =====
+const express = require("express");
+const bcrypt = require("bcryptjs");
+const db = require("../db");
+const { authMiddleware } = require("../auth");
+
+const router = express.Router();
+
+// GET /api/users → Admin: Nutzertabelle abrufen
+router.get("/", authMiddleware("admin"), (req, res) => {
+  try {
+    const users = db
+      .prepare("SELECT id, email, role, created_at FROM users ORDER BY id DESC")
+      .all();
+
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: "Fehler beim Laden der Benutzer", detail: err.message });
+  }
+});
+
+// POST /api/users → Admin: Benutzer anlegen
+router.post("/", authMiddleware("admin"), async (req, res) => {
+  const { email, password, role = "user" } = req.body;
+
+  if (!email || !password)
+    return res.status(400).json({ error: "email und password sind erforderlich" });
+
+  try {
+    const hash = await bcrypt.hash(password, 10);
+
+    db.prepare(
+      "INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)"
+    ).run(email, hash, role);
+
+    res.json({ status: "ok" });
+  } catch (err) {
+    if (err.message.includes("UNIQUE")) {
+      return res.status(400).json({ error: "Email bereits vergeben" });
+    }
+    res.status(500).json({ error: "Fehler beim Erstellen", detail: err.message });
+  }
+});
+
+// PUT /api/users/:id/password → User oder Admin: Passwort ändern
+router.put("/:id/password", authMiddleware(), async (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+  const { newPassword } = req.body;
+
+  if (!newPassword)
+    return res.status(400).json({ error: "newPassword fehlt" });
+
+  try {
+    // Nur Admin oder eigener Account
+    if (req.user.role !== "admin" && req.user.id !== userId) {
+      return res.status(403).json({ error: "Keine Berechtigung" });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+
+    db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, userId);
+
+    res.json({ status: "ok" });
+  } catch (err) {
+    res.status(500).json({ error: "Passwortänderung fehlgeschlagen", detail: err.message });
+  }
+});
+
+// DELETE /api/users/:id → Admin: Benutzer löschen
+router.delete("/:id", authMiddleware("admin"), (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+
+  try {
+    db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+
+    res.json({ status: "ok" });
+  } catch (err) {
+    res.status(500).json({ error: "Löschen fehlgeschlagen", detail: err.message });
+  }
+});
+
+module.exports = router;
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\backend\routes\version.js =====
+const express = require("express");
+const router = express.Router();
+
+router.get("/", (req, res) => {
+  const version = process.env.APP_VERSION || "unknown";
+  res.json({ version });
+});
+
+module.exports = router;
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\index.html =====
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Customer Dashboard</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\package.json =====
+{
+    "name": "customer-dashboard-frontend",
+    "version": "2.0.0",
+    "private": true,
+    "scripts": {
+      "dev": "vite",
+      "build": "vite build",
+      "preview": "vite preview"
+    },
+    "dependencies": {
+      "axios": "^1.7.0",
+      "react": "^18.3.0",
+      "react-dom": "^18.3.0",
+      "react-router-dom": "^6.27.0"
+    },
+    "devDependencies": {
+      "@vitejs/plugin-react": "^4.0.0",
+      "vite": "^5.0.0"
+    }
+  }
+  
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\vite.config.mjs =====
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    outDir: "dist"
+  }
+});
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\api.js =====
+import axios from "axios";
+
+const api = axios.create({
+  baseURL: "/api"
+});
+
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem("token");
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+export default api;
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\App.jsx =====
+import { Routes, Route, Navigate } from "react-router-dom";
+import { useAuth } from "./context/AuthContext.jsx";
+import LoginPage from "./pages/LoginPage.jsx";
+import DashboardPage from "./pages/DashboardPage.jsx";
+import LogsPage from "./pages/LogsPage.jsx";
+import ReportsPage from "./pages/ReportsPage.jsx";
+import SettingsPage from "./pages/SettingsPage.jsx";
+import StatusPage from "./pages/StatusPage.jsx"; // NEU
+import Layout from "./components/Layout.jsx";
+
+function PrivateRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="center">Lade...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/*"
+        element={
+          <PrivateRoute>
+            <Layout>
+              <Routes>
+                <Route path="/" element={<DashboardPage />} />
+                <Route path="/logs" element={<LogsPage />} />
+                <Route path="/reports" element={<ReportsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/status" element={<StatusPage />} /> {/* NEU */}
+              </Routes>
+            </Layout>
+          </PrivateRoute>
+        }
+      />
+    </Routes>
+  );
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\main.jsx =====
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import App from "./App.jsx";
+import { AuthProvider } from "./context/AuthContext.jsx";
+import "./styles.css";
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
+    <BrowserRouter>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </BrowserRouter>
+  </React.StrictMode>
+);
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\styles.css =====
+body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    background: #f3f4f6;
+  }
+  
+  .layout {
+    display: flex;
+    min-height: 100vh;
+  }
+  
+  .sidebar {
+    width: 220px;
+    background: #111827;
+    color: white;
+    padding: 1.5rem;
+  }
+  
+  .sidebar h2 {
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+  }
+  
+  .nav-link {
+    display: block;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    color: #e5e7eb;
+    text-decoration: none;
+    margin-bottom: 0.25rem;
+  }
+  
+  .nav-link:hover {
+    background: #374151;
+  }
+  
+  .nav-link-active {
+    background: #2563eb;
+    color: white;
+  }
+  
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .topbar {
+    background: white;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .content {
+    padding: 1.5rem;
+  }
+  
+  .cards {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  
+  .card {
+    background: white;
+    padding: 1rem;
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    min-width: 180px;
+  }
+  
+  .card-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+  }
+  
+  .logs {
+    list-style: none;
+    padding: 0;
+  }
+  
+  .logs li {
+    background: white;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    margin-bottom: 0.4rem;
+  }
+  
+  .muted {
+    color: #6b7280;
+    font-size: 0.8rem;
+    margin-left: 0.5rem;
+  }
+  
+  .center {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  
+  .card form,
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  
+  label {
+    display: flex;
+    flex-direction: column;
+    font-size: 0.9rem;
+  }
+  
+  input,
+  select {
+    padding: 0.4rem 0.5rem;
+    border-radius: 0.4rem;
+    border: 1px solid #d1d5db;
+  }
+  
+  button {
+    padding: 0.5rem 0.9rem;
+    border-radius: 0.5rem;
+    border: none;
+    background: #2563eb;
+    color: white;
+    cursor: pointer;
+  }
+  
+  button:hover {
+    background: #1d4ed8;
+  }
+  
+  .error {
+    color: #b91c1c;
+  }
+  
+  .success {
+    margin-left: 0.5rem;
+    color: #16a34a;
+  }
+  
+  .form-row {
+    margin-bottom: 0.75rem;
+  }
+  
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\components\Layout.jsx =====
+import { useAuth } from "../context/AuthContext.jsx";
+import Sidebar from "./Sidebar.jsx";
+import Topbar from "./Topbar.jsx";
+
+export default function Layout({ children }) {
+  const { user } = useAuth();
+
+  return (
+    <div className="layout">
+      <Sidebar />
+      <div className="main">
+        <Topbar user={user} />
+        <div className="content">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\components\Sidebar.jsx =====
+import { Link, useLocation } from "react-router-dom";
+
+export default function Sidebar() {
+  const location = useLocation();
+  const link = (to, label) => (
+    <Link
+      to={to}
+      className={
+        "nav-link" + (location.pathname === to ? " nav-link-active" : "")
+      }
+    >
+      {label}
+    </Link>
+  );
+
+  return (
+    <aside className="sidebar">
+      <h2>Customer Dashboard</h2>
+      {link("/", "Dashboard")}
+      {link("/status", "Update-Status")} {/* NEU */}
+      {link("/logs", "Logs")}
+      {link("/reports", "Reports")}
+      {link("/settings", "Einstellungen")}
+    </aside>
+  );
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\components\Topbar.jsx =====
+import { useAuth } from "../context/AuthContext.jsx";
+
+export default function Topbar({ user }) {
+  const { logout } = useAuth();
+  return (
+    <header className="topbar">
+      <div>Willkommen, {user?.email}</div>
+      <button onClick={logout}>Logout</button>
+    </header>
+  );
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\context\AuthContext.jsx =====
+import { createContext, useContext, useEffect, useState } from "react";
+import api from "../api";
+
+const AuthContext = createContext(null);
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+    api
+      .get("/auth/me")
+      .then(res => setUser(res.data))
+      .catch(() => localStorage.removeItem("token"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const login = async (email, password) => {
+    const res = await api.post("/auth/login", { email, password });
+    localStorage.setItem("token", res.data.token);
+    setUser(res.data.user);
+  };
+
+  const logout = () => {
+    localStorage.removeItem("token");
+    setUser(null);
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, login, logout, loading }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  return useContext(AuthContext);
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\DashboardPage.jsx =====
+import { useEffect, useState } from "react";
+import api from "../api";
+
+export default function DashboardPage() {
+  const [data, setData] = useState({ cards: [], recentLogs: [] });
+  const [version, setVersion] = useState("");
+
+  // Widgets / Dashboard-Daten laden
+  useEffect(() => {
+    api.get("/dashboard")
+      .then(res => setData({
+        cards: res.data.cards ?? [],
+        recentLogs: res.data.recentLogs ?? []
+      }))
+      .catch(() => setData({ cards: [], recentLogs: [] }));
+  }, []);
+
+  // Version vom Backend holen
+  useEffect(() => {
+    fetch("/api/version")
+      .then(res => res.json())
+      .then(data => setVersion(data.version))
+      .catch(() => setVersion("unknown"));
+  }, []);
+
+  return (
+    <div>
+      <h1>Dashboard {version ? `v${version}` : ""}</h1>
+
+      <div className="cards">
+        {(data.cards ?? []).map(card => (
+          <div key={card.id} className="card">
+            <h3>{card.title}</h3>
+            <p className="card-value">{card.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <h2>Letzte Logs</h2>
+      <ul className="logs">
+        {(data.recentLogs ?? []).map((log, i) => (
+          <li key={i}>
+            <strong>[{log.level}]</strong> {log.message}{" "}
+            <span className="muted">{log.created_at}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\LoginPage.jsx =====
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext.jsx";
+
+export default function LoginPage() {
+  const { login } = useAuth();
+  const nav = useNavigate();
+  const [email, setEmail] = useState("admin@example.com");
+  const [password, setPassword] = useState("admin123");
+  const [error, setError] = useState("");
+
+  const submit = async e => {
+    e.preventDefault();
+    setError("");
+    try {
+      await login(email, password);
+      nav("/");
+    } catch (err) {
+      setError("Login fehlgeschlagen");
+    }
+  };
+
+  return (
+    <div className="center">
+      <form className="card" onSubmit={submit}>
+        <h1>Login</h1>
+        <label>E-Mail
+          <input value={email} onChange={e => setEmail(e.target.value)} />
+        </label>
+        <label>Passwort
+          <input
+            type="password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+          />
+        </label>
+        {error && <div className="error">{error}</div>}
+        <button type="submit">Anmelden</button>
+      </form>
+    </div>
+  );
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\LogsPage.jsx =====
+import { useEffect, useState } from "react";
+import api from "../api";
+
+export default function LogsPage() {
+  const [logs, setLogs] = useState([]);
+
+  useEffect(() => {
+    api.get("/logs").then(res => setLogs(res.data));
+  }, []);
+
+  return (
+    <div>
+      <h1>Logs</h1>
+      <ul className="logs">
+        {logs.map((log, i) => (
+          <li key={i}>
+            <strong>[{log.level}]</strong> {log.message}{" "}
+            <span className="muted">{log.created_at}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\ReportsPage.jsx =====
+export default function ReportsPage() {
+    return (
+      <div>
+        <h1>Reports</h1>
+        <p>Hier kannst du später Berichte, Export, PDF usw. einbauen.</p>
+      </div>
+    );
+  }
+  
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\SettingsPage.jsx =====
+import { useEffect, useState } from "react";
+import api from "../api";
+
+export default function SettingsPage() {
+  const [settings, setSettings] = useState({ theme: "light", language: "de" });
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    api.get("/settings").then(res => setSettings(res.data));
+  }, []);
+
+  const save = async () => {
+    setSaved(false);
+    await api.put("/settings", settings);
+    setSaved(true);
+  };
+
+  return (
+    <div>
+      <h1>Einstellungen</h1>
+      <div className="form-row">
+        <label>Theme</label>
+        <select
+          value={settings.theme}
+          onChange={e =>
+            setSettings(s => ({ ...s, theme: e.target.value }))
+          }
+        >
+          <option value="light">Hell</option>
+          <option value="dark">Dunkel</option>
+        </select>
+      </div>
+
+      <div className="form-row">
+        <label>Sprache</label>
+        <select
+          value={settings.language}
+          onChange={e =>
+            setSettings(s => ({ ...s, language: e.target.value }))
+          }
+        >
+          <option value="de">Deutsch</option>
+          <option value="en">Englisch</option>
+        </select>
+      </div>
+
+      <button onClick={save}>Speichern</button>
+      {saved && <span className="success">Gespeichert!</span>}
+    </div>
+  );
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\app\frontend\src\pages\StatusPage.jsx =====
+import { useEffect, useState } from "react";
+import api from "../api";
+
+export default function StatusPage() {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setLoading(true);
+    setError("");
+    api
+      .get("/status")
+      .then(res => setStatus(res.data))
+      .catch(() => setError("Status konnte nicht geladen werden"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div>Update-Status wird geladen...</div>;
+  if (error) return <div className="error">{error}</div>;
+  if (!status) return <div>Kein Status verfügbar.</div>;
+
+  return (
+    <div>
+      <h1>Update-Status</h1>
+
+      <div className="cards">
+        <div className="card">
+          <h3>Installierte Version</h3>
+          <p className="card-value">
+            {status.installedVersion || "unbekannt"}
+          </p>
+        </div>
+        <div className="card">
+          <h3>Verfügbare Version</h3>
+          <p className="card-value">
+            {status.latestVersion || "unbekannt"}
+          </p>
+        </div>
+        <div className="card">
+          <h3>Letztes Ergebnis</h3>
+          <p className="card-value">
+            {status.lastResult || "–"}
+          </p>
+        </div>
+      </div>
+
+      <h2>Details</h2>
+      <ul className="logs">
+        <li>
+          <strong>Quelle:</strong> {status.lastSource || "–"}
+        </li>
+        <li>
+          <strong>Letzter Check:</strong>{" "}
+          {status.lastCheckedAt || "–"}
+        </li>
+        <li>
+          <strong>Nächster geplanter Check:</strong>{" "}
+          {status.nextCheckAt || "–"}
+        </li>
+        <li>
+          <strong>Rollback möglich:</strong>{" "}
+          {status.rollbackAvailable ? "Ja" : "Nein"}
+        </li>
+        <li>
+          <strong>Health:</strong>{" "}
+          {status.health || "unbekannt"}
+        </li>
+        {status.lastError && (
+          <li>
+            <strong>Fehler:</strong> {status.lastError}
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\deploy\.env.example =====
+# Welche Version soll gestartet werden?
+APP_VERSION=
+
+# Auf welchem Host-Port soll die App erreichbar sein?
+APP_PORT=8080
+
+# Weitere Settings nach Bedarf...
+NODE_ENV=production
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\deploy\docker-compose.yml =====
+services:
+  dashboard:
+    image: ghcr.io/leoaigner7/customer-dashboard-v2:${APP_VERSION}
+    env_file: .env
+    ports:
+      - "${APP_PORT:-8080}:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 15s
+      retries: 3
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\deploy\install.ps1 =====
+# Customer Dashboard Installer for Windows
+# VERSION 4.2 – FIXED HEALTHCHECK + SAFE START ORDER
+
+Param(
+    [string]$ComposeFile = "docker-compose.yml"
+)
+
+Write-Host "=== Customer Dashboard Installer (Windows) ===`n" -ForegroundColor Cyan
+
+# -------------------------------------------------------------
+# 0. ADMIN CHECK
+# -------------------------------------------------------------
+If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole] "Administrator"))
+{
+    Write-Host "Dieses Skript muss als ADMINISTRATOR ausgeführt werden!" -ForegroundColor Red
+    Write-Host "Rechtsklick auf PowerShell → 'Als Administrator ausführen'" -ForegroundColor Yellow
+    exit 1
+}
+
+# -------------------------------------------------------------
+# 1. Verzeichnisse bestimmen
+# -------------------------------------------------------------
+$deployDir   = $PSScriptRoot
+$packageRoot = Split-Path -Parent $PSScriptRoot
+
+$InstallDir   = "C:\CustomerDashboard"
+$TargetDeploy = "$InstallDir\deploy"
+$TargetDaemon = "$InstallDir\system-daemon"
+$LogDir       = "$InstallDir\logs"
+$TaskName     = "CustomerDashboardAutoUpdater"
+
+Write-Host "Installer liegt in:      $deployDir"
+Write-Host "Paketwurzelverzeichnis: $packageRoot`n"
+
+# -------------------------------------------------------------
+# 2. Installationsverzeichnisse
+# -------------------------------------------------------------
+Write-Host "Erstelle Installationsverzeichnisse..."
+New-Item -ItemType Directory -Force -Path $InstallDir    | Out-Null
+New-Item -ItemType Directory -Force -Path $TargetDeploy  | Out-Null
+New-Item -ItemType Directory -Force -Path $TargetDaemon  | Out-Null
+New-Item -ItemType Directory -Force -Path $LogDir        | Out-Null
+
+# -------------------------------------------------------------
+# 3. Robuster Kopiervorgang
+# -------------------------------------------------------------
+function Copy-WithRetry($source, $target) {
+    $success = $false
+
+    for ($i = 1; $i -le 5; $i++) {
+        try {
+            Copy-Item -Recurse -Force $source $target
+            $success = $true
+            break
+        } catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+
+    if (-not $success) {
+        Write-Host "FEHLER: Kopieren von $source nach $target fehlgeschlagen!" -ForegroundColor Red
+        exit 1
+    }
+}
+
+Write-Host "Kopiere Dateien..."
+Copy-WithRetry "$deployDir\*" $TargetDeploy
+
+if (Test-Path "$deployDir\.env") {
+    Copy-WithRetry "$deployDir\.env" $TargetDeploy
+}
+
+$daemonSource = "$packageRoot\system-daemon"
+if (-not (Test-Path $daemonSource)) {
+    Write-Host "system-daemon wurde nicht gefunden!" -ForegroundColor Red
+    exit 1
+}
+Copy-WithRetry "$daemonSource\*" $TargetDaemon
+
+# -------------------------------------------------------------
+# 4. .env prüfen
+# -------------------------------------------------------------
+$envPath = "$TargetDeploy\.env"
+
+$maxWait = 20
+$envFound = $false
+
+for ($i = 1; $i -le $maxWait; $i++) {
+    if (Test-Path $envPath) {
+        $envFound = $true
+        break
+    }
+    Start-Sleep -Milliseconds 200
+}
+
+if (-not $envFound) {
+    Write-Host "ERROR: .env ist nicht sichtbar in C:\CustomerDashboard\deploy!"
+    exit 1
+}
+
+$envLines = Get-Content $envPath
+$version  = ($envLines | Where-Object { $_ -match '^APP_VERSION=' }) -replace 'APP_VERSION=',''
+$portLine = ($envLines | Where-Object { $_ -match '^APP_PORT=' })
+$port     = if ($portLine) { $portLine -replace 'APP_PORT=','' } else { "8080" }
+
+Write-Host "Version: $version"
+Write-Host "Port:    $port`n"
+
+# -------------------------------------------------------------
+# 5. Compose-Datei prüfen
+# -------------------------------------------------------------
+$composeFilePath = Join-Path $TargetDeploy $ComposeFile
+if (-not (Test-Path $composeFilePath)) {
+    Write-Host "docker-compose.yml fehlt!" -ForegroundColor Red
+    exit 1
+}
+
+# -------------------------------------------------------------
+# 6. Container stoppen
+# -------------------------------------------------------------
+Write-Host "Stoppe alte Dashboard-Container..."
+docker compose -f "$composeFilePath" down | Out-Null
+
+# -------------------------------------------------------------
+# 7. Neues Image laden + Container starten
+# -------------------------------------------------------------
+Write-Host "⬇ Lade aktuelles Image..."
+docker compose -f "$composeFilePath" pull
+
+Write-Host "Starte Dashboard..."
+docker compose -f "$composeFilePath" up -d
+
+# -------------------------------------------------------------
+# 8. ROBUSTER HEALTHCHECK (statt 10 Sekunden warten)
+# -------------------------------------------------------------
+Write-Host "Prüfe Dashboard Healthcheck..."
+
+$healthUrl = "http://localhost:$port/api/health"
+$ok = $false
+
+for ($i = 1; $i -le 20; $i++) {
+    try {
+        $res = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
+        if ($res.StatusCode -ge 200 -and $res.StatusCode -lt 400) {
+            $ok = $true
+            break
+        }
+    } catch { }
+
+    Start-Sleep -Seconds 2
+}
+
+if ($ok) {
+    Write-Host "Dashboard erfolgreich gestartet!" -ForegroundColor Green
+} else {
+    Write-Host "WARNUNG: Dashboard antwortet nicht sauber, fahre trotzdem fort." -ForegroundColor Yellow
+}
+
+# -------------------------------------------------------------
+# 9. Auto-Updater installieren (NACH erfolgreichem Start!)
+# -------------------------------------------------------------
+Write-Host "Installiere Auto-Update Daemon..."
+
+$nodePath = (Get-Command node.exe).Source
+$daemonPath = "C:\CustomerDashboard\system-daemon\daemon.js"
+$workingDir = "C:\CustomerDashboard\system-daemon"
+
+schtasks /delete /tn "CustomerDashboardAutoUpdater" /f 2>$null
+
+$action = New-ScheduledTaskAction `
+    -Execute $nodePath `
+    -Argument "`"$daemonPath`"" `
+    -WorkingDirectory $workingDir
+
+$triggerBoot = New-ScheduledTaskTrigger -AtStartup
+
+$startTime = (Get-Date).AddMinutes(1).ToString("HH:mm")
+$duration = (New-TimeSpan -Days 3650)
+
+$triggerRepeat = New-ScheduledTaskTrigger `
+    -Once `
+    -At $startTime `
+    -RepetitionInterval (New-TimeSpan -Minutes 5) `
+    -RepetitionDuration $duration
+
+Register-ScheduledTask `
+    -TaskName "CustomerDashboardAutoUpdater" `
+    -Action $action `
+    -Trigger $triggerBoot, $triggerRepeat `
+    -RunLevel Highest `
+    -User "SYSTEM"
+
+Write-Host "Auto-Update Daemon installiert (SYSTEM Task)."
+
+# -------------------------------------------------------------
+# 10. Fertig
+# -------------------------------------------------------------
+Write-Host "`nINSTALLATION ABGESCHLOSSEN!" -ForegroundColor Green
+Write-Host "Dashboard: http://localhost:$port/"
+Write-Host "Auto-Update: $TaskName"
+Write-Host "Logs: $LogDir"
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\deploy\install.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+COMPOSE_FILE="${1:-docker-compose.yml}"
+
+echo "=== Customer Dashboard Installer (Linux) ==="
+echo
+
+# -------------------------------------------------------------
+# 0. Pfade
+# -------------------------------------------------------------
+INSTALL_DIR="/opt/customer-dashboard"
+DEPLOY_DIR="$INSTALL_DIR/deploy"
+DAEMON_DIR="$INSTALL_DIR/system-daemon"
+LOG_DIR="$INSTALL_DIR/logs"
+SERVICE_NAME="customer-dashboard-updater"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+echo "Installationsverzeichnis:    $INSTALL_DIR"
+echo "Paketwurzelverzeichnis:      $PACKAGE_ROOT"
+echo
+
+# -------------------------------------------------------------
+# 1. Verzeichnisse anlegen
+# -------------------------------------------------------------
+sudo mkdir -p "$INSTALL_DIR" "$DEPLOY_DIR" "$DAEMON_DIR" "$LOG_DIR"
+
+# -------------------------------------------------------------
+# 2. Dateien kopieren
+# -------------------------------------------------------------
+echo "Kopiere deploy-Dateien..."
+sudo cp -r "$SCRIPT_DIR/"* "$DEPLOY_DIR/"
+
+echo "Kopiere system-daemon..."
+if [ ! -d "$PACKAGE_ROOT/system-daemon" ]; then
+  echo "FEHLER: system-daemon wurde nicht gefunden (erwartet unter $PACKAGE_ROOT/system-daemon)" >&2
+  exit 1
+fi
+sudo cp -r "$PACKAGE_ROOT/system-daemon/"* "$DAEMON_DIR/"
+
+# .env aus .env.example erzeugen, falls nicht vorhanden
+if [ ! -f "$DEPLOY_DIR/.env" ] && [ -f "$DEPLOY_DIR/.env.example" ]; then
+  sudo cp "$DEPLOY_DIR/.env.example" "$DEPLOY_DIR/.env"
+fi
+
+# -------------------------------------------------------------
+# 3. Checks
+# -------------------------------------------------------------
+if ! command -v docker >/dev/null 2>&1; then
+  echo "FEHLER: Docker ist nicht installiert oder nicht im PATH." >&2
+  exit 1
+fi
+
+if [ ! -f "$DEPLOY_DIR/$COMPOSE_FILE" ]; then
+  echo "FEHLER: $COMPOSE_FILE fehlt im deploy-Verzeichnis." >&2
+  exit 1
+fi
+
+if [ ! -f "$DEPLOY_DIR/.env" ]; then
+  echo "FEHLER: .env fehlt im deploy-Verzeichnis." >&2
+  exit 1
+fi
+
+# APP_PORT aus .env lesen
+set +o allexport
+# shellcheck source=/dev/null
+source "$DEPLOY_DIR/.env"
+PORT="${APP_PORT:-8080}"
+
+echo "Verwendete Version aus .env: ${APP_VERSION:-unbekannt}"
+echo "Port:                        ${PORT}"
+echo
+
+# -------------------------------------------------------------
+# 4. Docker Container neu starten
+# -------------------------------------------------------------
+cd "$DEPLOY_DIR"
+
+echo "Stoppe bestehende Container (falls vorhanden)..."
+docker compose -f "$COMPOSE_FILE" down || true
+
+echo "Ziehe aktuelles Image..."
+docker compose -f "$COMPOSE_FILE" pull
+
+echo "Starte Dashboard..."
+docker compose -f "$COMPOSE_FILE" up -d
+
+echo "Warte 10 Sekunden auf Start..."
+sleep 10
+
+# -------------------------------------------------------------
+# 5. Health-Check
+# -------------------------------------------------------------
+URL="http://localhost:${PORT}/"
+
+echo "Prüfe Dashboard unter $URL ..."
+if curl -fsS "$URL" >/dev/null 2>&1; then
+  echo "Dashboard erfolgreich gestartet."
+else
+  echo "WARNUNG: Dashboard läuft evtl. nicht korrekt. HTTP-Check fehlgeschlagen." >&2
+fi
+
+# -------------------------------------------------------------
+# 6. systemd-Service für Auto-Update-Daemon
+# -------------------------------------------------------------
+if [ -f "$DAEMON_DIR/customer-dashboard-updater.service" ]; then
+  echo "Installiere systemd-Service für Auto-Update-Daemon..."
+
+  sudo cp "$DAEMON_DIR/customer-dashboard-updater.service" "$SERVICE_FILE"
+  sudo systemctl daemon-reload
+  sudo systemctl enable "$SERVICE_NAME"
+  sudo systemctl restart "$SERVICE_NAME"
+
+  echo "Auto-Update-Daemon wurde als systemd-Service installiert und gestartet."
+else
+  echo "Hinweis: customer-dashboard-updater.service wurde nicht gefunden, Auto-Update-Dienst wurde NICHT eingerichtet."
+fi
+
+# -------------------------------------------------------------
+# 7. Fertig
+# -------------------------------------------------------------
+echo
+echo "INSTALLATION ABGESCHLOSSEN."
+echo "Dashboard:     $URL"
+echo "Logs:          $LOG_DIR"
+echo "Daemon-Service: $SERVICE_NAME (systemd)"
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\config.example.json =====
+{
+  "mode": "auto-install",
+  "checkIntervalMs": 300000,
+
+  "paths": {
+    "installRoot": "C:\\CustomerDashboard",
+    "stagingDir": "C:\\CustomerDashboard\\staging",
+    "backupDir": "C:\\CustomerDashboard\\backup",
+    "statusFile": "C:\\CustomerDashboard\\logs\\update-status.json"
+  },
+
+  "logging": {
+    "logFile": "C:\\CustomerDashboard\\logs\\daemon.log",
+    "level": "info"
+  },
+
+  "backup": {
+    "enabled": true,
+    "keep": 5
+  },
+
+  "target": {
+    "type": "docker-dashboard",
+    "envFile": "C:\\CustomerDashboard\\deploy\\.env",
+    "versionKey": "APP_VERSION",
+    "composeFile": "C:\\CustomerDashboard\\deploy\\docker-compose.yml",
+    "serviceName": "dashboard",
+    "healthUrl": "http://localhost:8080/"
+  },
+
+  "sources": {
+    "github": {
+      "enabled": true,
+      "apiUrl": "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest",
+      "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}"
+    },
+    "offlineZip": {
+      "enabled": true,
+      "zipPath": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip",
+      "hashFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sha256",
+      "signatureFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sig",
+      "version": null
+    },
+    "networkShare": {
+      "enabled": false,
+      "root": "\\\\fileserver\\releases\\customer-dashboard-v2",
+      "latestFile": "latest.txt"
+    }
+  },
+
+  "security": {
+    "requireHash": true,
+    "requireSignature": false,
+    "publicKeyFile": "C:\\CustomerDashboard\\keys\\public.pem"
+  },
+
+  "selfUpdate": {
+    "enabled": false,
+    "zipUrl": "",
+    "hashUrl": "",
+    "signatureUrl": "",
+    "localZipPath": "C:\\CustomerDashboard\\system-daemon\\daemon-update.zip"
+  },
+
+  "policy": {
+    "pinnedVersion": null,
+    "allowDowngrade": false
+  }
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\config.json =====
+{
+  "mode": "auto-install",
+  "checkIntervalMs": 300000,
+
+  "paths": {
+    "installRoot": "C:\\CustomerDashboard",
+    "stagingDir": "C:\\CustomerDashboard\\staging",
+    "backupDir": "C:\\CustomerDashboard\\backup",
+    "statusFile": "C:\\CustomerDashboard\\logs\\update-status.json"
+  },
+
+  "logging": {
+    "logFile": "C:\\CustomerDashboard\\logs\\daemon.log",
+    "level": "info"
+  },
+
+  "backup": {
+    "enabled": true,
+    "keep": 5
+  },
+
+  "target": {
+    "type": "docker-dashboard",
+    "envFile": "C:\\CustomerDashboard\\deploy\\.env",
+    "versionKey": "APP_VERSION",
+    "composeFile": "C:\\CustomerDashboard\\deploy\\docker-compose.yml",
+    "serviceName": "dashboard",
+    "healthUrl": "http://localhost:8080"
+  },
+
+  "sources": {
+    "github": {
+      "enabled": true,
+      "apiUrl": "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest",
+      "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}"
+    },
+    "offlineZip": {
+      "enabled": true,
+      "zipPath": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip",
+      "hashFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sha256",
+      "signatureFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sig",
+      "version": null
+    },
+    "networkShare": {
+      "enabled": false,
+      "root": "\\\\fileserver\\releases\\customer-dashboard-v2",
+      "latestFile": "latest.txt"
+    }
+  },
+
+  "security": {
+    "requireHash": true,
+    "requireSignature": false,
+    "publicKeyFile": "C:\\CustomerDashboard\\keys\\public.pem"
+  },
+
+  "selfUpdate": {
+    "enabled": false,
+    "zipUrl": "",
+    "hashUrl": "",
+    "signatureUrl": "",
+    "localZipPath": "C:\\CustomerDashboard\\system-daemon\\daemon-update.zip"
+  },
+
+  "policy": {
+    "pinnedVersion": null,
+    "allowDowngrade": false
+  }
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\customer-dashboard-updater.service =====
+[Unit]
+Description=Customer Dashboard Auto-Update Daemon
+After=network-online.target docker.service
+
+[Service]
+WorkingDirectory=/opt/customer-dashboard/system-daemon
+ExecStart=/usr/bin/node daemon.js
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\daemon.js =====
+// system-daemon/daemon.js
+
+/********************************************************************
+ * CUSTOMER DASHBOARD – AUTO-UPDATER (Version 6.6.4)
+ *
+ * Aufgaben:
+ *  - periodisch nach neuen Versionen suchen (GitHub / offline / Share)
+ *  - bei neuer Version: Docker-Update durchführen
+ *  - vor Update: Backup des deploy-Verzeichnisses
+ *  - nach Fehler: Rollback auf letztes Backup (falls vorhanden)
+ *  - Status in update-status.json pflegen
+ ********************************************************************/
+
+const fs = require("fs");
+const path = require("path");
+const axios = require("axios");
+const AdmZip = require("adm-zip");
+
+const target = require("./targets/docker-dashboard");
+const security = require("./security");
+const { checkAndApplySelfUpdate } = require("./selfUpdate");
+
+// ------------------------------------------------------------
+// KONFIGURATION LADEN
+// ------------------------------------------------------------
+const CONFIG_PATH =
+  process.env.AUTUPDATE_CONFIG || path.join(__dirname, "config.json");
+
+if (!fs.existsSync(CONFIG_PATH)) {
+  console.error("Config nicht gefunden:", CONFIG_PATH);
+  process.exit(1);
+}
+
+const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+
+const installRoot = config.paths.installRoot || "C:\\CustomerDashboard";
+const backupRoot = config.paths.backupDir || path.join(installRoot, "backup");
+const statusFile =
+  config.paths.statusFile ||
+  path.join(installRoot, "logs", "update-status.json");
+
+const intervalMs = config.checkIntervalMs || 5 * 60 * 1000;
+
+// Wrapper um target.log
+function log(level, message, extra) {
+  target.log(level, message, config, extra);
+}
+
+// ------------------------------------------------------------
+// STATUSDATEI
+// ------------------------------------------------------------
+function readStatus() {
+  try {
+    if (!fs.existsSync(statusFile)) return {};
+    return JSON.parse(fs.readFileSync(statusFile, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeStatus(partial) {
+  const current = readStatus();
+  const updated = {
+    ...current,
+    ...partial,
+    lastUpdate: new Date().toISOString(),
+  };
+
+  fs.mkdirSync(path.dirname(statusFile), { recursive: true });
+  fs.writeFileSync(statusFile, JSON.stringify(updated, null, 2), "utf8");
+}
+
+// ------------------------------------------------------------
+// VERSIONEN VERGLEICHEN
+// ------------------------------------------------------------
+function compareSemver(a, b) {
+  if (!a && !b) return 0;
+  if (!a) return -1;
+  if (!b) return 1;
+
+  const pa = a.split(".").map((n) => parseInt(n, 10));
+  const pb = b.split(".").map((n) => parseInt(n, 10));
+  const len = Math.max(pa.length, pb.length);
+
+  for (let i = 0; i < len; i++) {
+    const va = pa[i] || 0;
+    const vb = pb[i] || 0;
+    if (va > vb) return 1;
+    if (va < vb) return -1;
+  }
+  return 0;
+}
+
+// ------------------------------------------------------------
+// UPDATE-QUELLEN
+// ------------------------------------------------------------
+async function getGithubCandidate() {
+  const src = config.sources && config.sources.github;
+  if (!src || !src.enabled || !src.apiUrl) return null;
+
+  try {
+    const res = await axios.get(src.apiUrl, {
+      headers: { "User-Agent": "customer-dashboard-daemon" },
+    });
+
+    const tag =
+      res.data.tag_name || res.data.name || res.data.version || null;
+    if (!tag) {
+      log("warn", "GitHub-Release ohne Versionsangabe erhalten.");
+      return null;
+    }
+
+    const version = tag.replace(/^v/i, "");
+    const image = src.imageTemplate
+      ? src.imageTemplate.replace("{version}", version)
+      : null;
+
+    return {
+      source: "github",
+      version,
+      artifactType: "docker-image",
+      image,
+    };
+  } catch (err) {
+    log("warn", "GitHub-Quelle konnte nicht gelesen werden", {
+      error: err.message,
+    });
+    return null;
+  }
+}
+
+async function getOfflineZipCandidate() {
+  const src = config.sources && config.sources.offlineZip;
+  if (!src || !src.enabled || !src.zipPath) return null;
+
+  if (!fs.existsSync(src.zipPath)) {
+    return null;
+  }
+
+  let version = src.version || null;
+
+  try {
+    const zip = new AdmZip(src.zipPath);
+    const entry = zip.getEntry("VERSION.txt");
+    if (entry) {
+      version = zip.readAsText(entry).trim();
+    }
+  } catch (err) {
+    log("warn", "VERSION.txt aus Offline-ZIP konnte nicht gelesen werden", {
+      error: err.message,
+    });
+  }
+
+  return {
+    source: "offlineZip",
+    version,
+    artifactType: "zip",
+    zipPath: src.zipPath,
+    hashFile: src.hashFile || null,
+    signatureFile: src.signatureFile || null,
+  };
+}
+
+async function getNetworkShareCandidate() {
+  const src = config.sources && config.sources.networkShare;
+  if (!src || !src.enabled || !src.root) return null;
+
+  try {
+    const latestFile = path.join(src.root, src.latestFile || "latest.txt");
+    if (!fs.existsSync(latestFile)) {
+      return null;
+    }
+
+    const version = fs.readFileSync(latestFile, "utf8").trim();
+    const zipPath = path.join(
+      src.root,
+      `customer-dashboard-v2-${version}.zip`
+    );
+
+    if (!fs.existsSync(zipPath)) {
+      log("warn", "Netzwerk-Share: ZIP zur Version nicht gefunden", {
+        zipPath,
+      });
+      return null;
+    }
+
+    return {
+      source: "networkShare",
+      version,
+      artifactType: "zip",
+      zipPath,
+    };
+  } catch (err) {
+    log("warn", "Netzwerk-Share konnte nicht gelesen werden", {
+      error: err.message,
+    });
+    return null;
+  }
+}
+
+async function resolveLatestCandidate(currentVersion) {
+  const candidates = [];
+
+  const gh = await getGithubCandidate();
+  if (gh) candidates.push(gh);
+
+  const offline = await getOfflineZipCandidate();
+  if (offline) candidates.push(offline);
+
+  const share = await getNetworkShareCandidate();
+  if (share) candidates.push(share);
+
+  if (candidates.length === 0) return null;
+
+  // Policy: pinnedVersion
+  const pinned =
+    config.policy && typeof config.policy.pinnedVersion === "string"
+      ? config.policy.pinnedVersion
+      : null;
+
+  let best = null;
+
+  for (const c of candidates) {
+    if (!c.version) continue;
+
+    if (pinned && c.version !== pinned) {
+      // auf bestimmte Version gepinnt -> alles andere ignorieren
+      continue;
+    }
+
+    if (!best) {
+      best = c;
+      continue;
+    }
+
+    if (compareSemver(c.version, best.version) > 0) {
+      best = c;
+    }
+  }
+
+  if (!best) return null;
+
+  // Downgrade-Policy
+  if (
+    currentVersion &&
+    best.version &&
+    compareSemver(best.version, currentVersion) < 0 &&
+    !(config.policy && config.policy.allowDowngrade)
+  ) {
+    log("info", "Gefundene Version wäre Downgrade – laut Policy verboten.", {
+      currentVersion,
+      candidate: best.version,
+    });
+    return null;
+  }
+
+  return best;
+}
+
+// ------------------------------------------------------------
+// BACKUP & ROLLBACK
+// ------------------------------------------------------------
+function copyRecursive(src, dest) {
+  const stat = fs.statSync(src);
+  if (stat.isDirectory()) {
+    fs.mkdirSync(dest, { recursive: true });
+    for (const entry of fs.readdirSync(src)) {
+      copyRecursive(path.join(src, entry), path.join(dest, entry));
+    }
+  } else {
+    fs.copyFileSync(src, dest);
+  }
+}
+
+function cleanupOldBackups(keep) {
+  if (!fs.existsSync(backupRoot)) return;
+
+  const entries = fs
+    .readdirSync(backupRoot, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .sort((a, b) => {
+      const at = fs.statSync(path.join(backupRoot, a.name)).mtimeMs;
+      const bt = fs.statSync(path.join(backupRoot, b.name)).mtimeMs;
+      return bt - at;
+    });
+
+  const toDelete = entries.slice(keep);
+
+  for (const e of toDelete) {
+    const dir = path.join(backupRoot, e.name);
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      log("info", "Altes Backup entfernt", { backupDir: dir });
+    } catch (err) {
+      log("warn", "Altes Backup konnte nicht entfernt werden", {
+        backupDir: dir,
+        error: err.message,
+      });
+    }
+  }
+}
+
+function createBackup() {
+  if (!config.backup || !config.backup.enabled) {
+    log("info", "Backups sind laut Konfiguration deaktiviert.");
+    return null;
+  }
+
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupDir = path.join(backupRoot, ts);
+
+  fs.mkdirSync(backupDir, { recursive: true });
+
+  const deploySrc = path.join(installRoot, "deploy");
+  const deployDest = path.join(backupDir, "deploy");
+
+  if (fs.existsSync(deploySrc)) {
+    copyRecursive(deploySrc, deployDest);
+    log("info", "Backup des deploy-Verzeichnisses erstellt", {
+      backupDir,
+    });
+  } else {
+    log("warn", "Kein deploy-Verzeichnis für Backup gefunden", {
+      path: deploySrc,
+    });
+  }
+
+  const keep = config.backup.keep || 5;
+  cleanupOldBackups(keep);
+
+  return backupDir;
+}
+
+function restoreBackup(backupDir) {
+  if (!backupDir || !fs.existsSync(backupDir)) {
+    log("warn", "Kein gültiges Backup für Rollback gefunden.", {
+      backupDir,
+    });
+    throw new Error("Kein gültiges Backup-Verzeichnis.");
+  }
+
+  const deployBackup = path.join(backupDir, "deploy");
+  const deployTarget = path.join(installRoot, "deploy");
+
+  if (!fs.existsSync(deployBackup)) {
+    log("error", "Backup enthält kein deploy-Verzeichnis.", {
+      backupDir,
+    });
+    throw new Error("Backup enthält kein deploy-Verzeichnis.");
+  }
+
+  log("info", "Starte Rollback aus Backup.", { backupDir });
+
+  // Versuche mehrfach, da Windows gelegentlich Dateien sperrt
+  let lastError = null;
+  for (let i = 0; i < 10; i++) {
+    try {
+      if (fs.existsSync(deployTarget)) {
+        fs.rmSync(deployTarget, { recursive: true, force: true });
+      }
+      copyRecursive(deployBackup, deployTarget);
+
+      log("info", "Rollback erfolgreich abgeschlossen.", {
+        backupDir,
+      });
+      return;
+    } catch (err) {
+      lastError = err;
+      log("warn", "Rollback-Versuch fehlgeschlagen, neuer Versuch folgt.", {
+        attempt: i + 1,
+        error: err.message,
+      });
+    }
+  }
+
+  throw lastError || new Error("Rollback fehlgeschlagen.");
+}
+
+// ------------------------------------------------------------
+// UPDATE-ANWENDUNG
+// ------------------------------------------------------------
+async function applyDockerUpdate(candidate, latestVersion) {
+  const started = Date.now();
+
+  log("info", "Starte Docker-Update.", {
+    candidate,
+  });
+
+  // Docker-Image laden
+  await target.downloadImage(config, latestVersion);
+
+  // Version direkt in .env schreiben
+  target.writeEnvVersion(config, latestVersion);
+
+  // Docker-Stack neu starten
+  await target.restartDashboard(config);
+
+  // Robuster Healthcheck (bis ca. 90 Sekunden)
+  const ok = await target.checkHealth(config, 45, 2000);
+  const durationMs = Date.now() - started;
+
+  if (!ok) {
+    log("error", "Healthcheck nach Docker-Update fehlgeschlagen.", {
+      version: latestVersion,
+      durationMs,
+    });
+    throw new Error(
+      "Healthcheck nach Docker-Update fehlgeschlagen (erweitertes Timeout)."
+    );
+  }
+
+  log("info", "Docker-Update erfolgreich angewendet.", {
+    version: latestVersion,
+    durationMs,
+  });
+}
+
+// ------------------------------------------------------------
+// HAUPT-UPDATE-LOGIK
+// ------------------------------------------------------------
+async function checkOnce() {
+  const startedAt = new Date();
+  const startedIso = startedAt.toISOString();
+
+  log("info", "=== Update-Check gestartet ===", {
+    startedAt: startedIso,
+  });
+
+  try {
+    const currentVersion = target.readEnvVersion(config) || null;
+
+    log("info", "Aktuell installierte Version ermittelt.", {
+      currentVersion: currentVersion || "(unbekannt)",
+    });
+
+    const candidate = await resolveLatestCandidate(currentVersion);
+
+    if (!candidate || !candidate.version) {
+      log("info", "Keine neuere Version gefunden.", {
+        currentVersion,
+      });
+
+      writeStatus({
+        currentVersion,
+        latestVersion: currentVersion,
+        lastResult: "no-update",
+        lastSource: candidate ? candidate.source : null,
+        lastError: null,
+        lastCheckedAt: startedIso,
+      });
+      return;
+    }
+
+    const cmp = compareSemver(candidate.version, currentVersion || "0.0.0");
+    if (cmp <= 0 && !(config.policy && config.policy.allowDowngrade)) {
+      log("info", "Gefundene Version ist nicht neuer als die installierte.", {
+        currentVersion,
+        candidateVersion: candidate.version,
+      });
+
+      writeStatus({
+        currentVersion,
+        latestVersion: candidate.version,
+        lastResult: "no-update",
+        lastSource: candidate.source,
+        lastError: null,
+        lastCheckedAt: startedIso,
+      });
+      return;
+    }
+
+    log("info", "Neues Update wird vorbereitet.", {
+      currentVersion,
+      newVersion: candidate.version,
+      source: candidate.source,
+      type: candidate.artifactType,
+    });
+
+    const backupDir = createBackup();
+
+    try {
+      if (candidate.artifactType === "docker-image") {
+        await applyDockerUpdate(candidate, candidate.version);
+      } else if (candidate.artifactType === "zip") {
+        // Falls du später ZIP-Updates wieder aktivierst:
+        //  - ZIP entpacken
+        //  - deploy-Verzeichnis ersetzen
+        //  - target.restartDashboard(config)
+        throw new Error(
+          "ZIP-Updates sind in dieser Version des Updaters nicht implementiert."
+        );
+      } else {
+        throw new Error(
+          `Unbekannter Artifact-Typ: ${candidate.artifactType}`
+        );
+      }
+
+      const durationMs = Date.now() - startedAt.getTime();
+
+      log("info", "Update erfolgreich abgeschlossen.", {
+        newVersion: candidate.version,
+        durationMs,
+      });
+
+      writeStatus({
+        currentVersion: candidate.version,
+        latestVersion: candidate.version,
+        lastResult: "success",
+        lastSource: candidate.source,
+        lastError: null,
+        lastCheckedAt: startedIso,
+      });
+    } catch (err) {
+      log("error", "Fehler beim Anwenden des Updates.", {
+        error: err.message,
+      });
+
+      if (config.backup && config.backup.enabled && backupDir) {
+        log("warn", "Update fehlgeschlagen – starte Rollback aus Backup.", {
+          backupDir,
+        });
+
+        try {
+          await restoreBackup(backupDir);
+          await target.restartDashboard(config);
+
+          writeStatus({
+            currentVersion,
+            latestVersion: candidate.version,
+            lastResult: "rollback",
+            lastSource: candidate.source,
+            lastError: err.message,
+            lastCheckedAt: startedIso,
+          });
+        } catch (rollbackErr) {
+          log("error", "Rollback ist ebenfalls fehlgeschlagen.", {
+            error: rollbackErr.message,
+          });
+
+          writeStatus({
+            currentVersion,
+            latestVersion: candidate.version,
+            lastResult: "failed-rollback",
+            lastSource: candidate.source,
+            lastError: rollbackErr.message,
+            lastCheckedAt: startedIso,
+          });
+        }
+      } else {
+        writeStatus({
+          currentVersion,
+          latestVersion: candidate.version,
+          lastResult: "failed",
+          lastSource: candidate.source,
+          lastError: err.message,
+          lastCheckedAt: startedIso,
+        });
+      }
+    }
+  } catch (e) {
+    log("error", "Unerwarteter Fehler im Update-Check.", {
+      error: e.message,
+    });
+  } finally {
+    const durationMs = Date.now() - startedAt.getTime();
+    log("info", "=== Update-Check beendet ===", {
+      durationMs,
+    });
+  }
+}
+
+// ------------------------------------------------------------
+// MAIN
+// ------------------------------------------------------------
+async function main() {
+  log("info", "Systemweiter Auto-Update-Daemon gestartet.");
+
+  // Optional: Self-Update des Daemons
+  await checkAndApplySelfUpdate(config, log, security);
+
+  await checkOnce();
+  setInterval(checkOnce, intervalMs);
+}
+
+main().catch((err) => {
+  log("error", "Daemon konnte nicht gestartet werden.", {
+    error: err.message,
+  });
+  process.exit(1);
+});
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\package-lock.json =====
+{
+  "name": "system-daemon",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "system-daemon",
+      "version": "1.0.0",
+      "license": "ISC",
+      "dependencies": {
+        "adm-zip": "^0.5.16",
+        "axios": "^1.13.2"
+      }
+    },
+    "node_modules/adm-zip": {
+      "version": "0.5.16",
+      "resolved": "https://registry.npmjs.org/adm-zip/-/adm-zip-0.5.16.tgz",
+      "integrity": "sha512-TGw5yVi4saajsSEgz25grObGHEUaDrniwvA2qwSC060KfqGPdglhvPMA2lPIoxs3PQIItj2iag35fONcQqgUaQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=12.0"
+      }
+    },
+    "node_modules/asynckit": {
+      "version": "0.4.0",
+      "resolved": "https://registry.npmjs.org/asynckit/-/asynckit-0.4.0.tgz",
+      "integrity": "sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==",
+      "license": "MIT"
+    },
+    "node_modules/axios": {
+      "version": "1.13.2",
+      "resolved": "https://registry.npmjs.org/axios/-/axios-1.13.2.tgz",
+      "integrity": "sha512-VPk9ebNqPcy5lRGuSlKx752IlDatOjT9paPlm8A7yOuW2Fbvp4X3JznJtT4f0GzGLLiWE9W8onz51SqLYwzGaA==",
+      "license": "MIT",
+      "dependencies": {
+        "follow-redirects": "^1.15.6",
+        "form-data": "^4.0.4",
+        "proxy-from-env": "^1.1.0"
+      }
+    },
+    "node_modules/call-bind-apply-helpers": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz",
+      "integrity": "sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0",
+        "function-bind": "^1.1.2"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/combined-stream": {
+      "version": "1.0.8",
+      "resolved": "https://registry.npmjs.org/combined-stream/-/combined-stream-1.0.8.tgz",
+      "integrity": "sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==",
+      "license": "MIT",
+      "dependencies": {
+        "delayed-stream": "~1.0.0"
+      },
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/delayed-stream": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/delayed-stream/-/delayed-stream-1.0.0.tgz",
+      "integrity": "sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=0.4.0"
+      }
+    },
+    "node_modules/dunder-proto": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz",
+      "integrity": "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bind-apply-helpers": "^1.0.1",
+        "es-errors": "^1.3.0",
+        "gopd": "^1.2.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/es-define-property": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz",
+      "integrity": "sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/es-errors": {
+      "version": "1.3.0",
+      "resolved": "https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz",
+      "integrity": "sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/es-object-atoms": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.1.tgz",
+      "integrity": "sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/es-set-tostringtag": {
+      "version": "2.1.0",
+      "resolved": "https://registry.npmjs.org/es-set-tostringtag/-/es-set-tostringtag-2.1.0.tgz",
+      "integrity": "sha512-j6vWzfrGVfyXxge+O0x5sh6cvxAog0a/4Rdd2K36zCMV5eJ+/+tOAngRO8cODMNWbVRdVlmGZQL2YS3yR8bIUA==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0",
+        "get-intrinsic": "^1.2.6",
+        "has-tostringtag": "^1.0.2",
+        "hasown": "^2.0.2"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/follow-redirects": {
+      "version": "1.15.11",
+      "resolved": "https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.15.11.tgz",
+      "integrity": "sha512-deG2P0JfjrTxl50XGCDyfI97ZGVCxIpfKYmfyrQ54n5FO/0gfIES8C/Psl6kWVDolizcaaxZJnTS0QSMxvnsBQ==",
+      "funding": [
+        {
+          "type": "individual",
+          "url": "https://github.com/sponsors/RubenVerborgh"
+        }
+      ],
+      "license": "MIT",
+      "engines": {
+        "node": ">=4.0"
+      },
+      "peerDependenciesMeta": {
+        "debug": {
+          "optional": true
+        }
+      }
+    },
+    "node_modules/form-data": {
+      "version": "4.0.5",
+      "resolved": "https://registry.npmjs.org/form-data/-/form-data-4.0.5.tgz",
+      "integrity": "sha512-8RipRLol37bNs2bhoV67fiTEvdTrbMUYcFTiy3+wuuOnUog2QBHCZWXDRijWQfAkhBj2Uf5UnVaiWwA5vdd82w==",
+      "license": "MIT",
+      "dependencies": {
+        "asynckit": "^0.4.0",
+        "combined-stream": "^1.0.8",
+        "es-set-tostringtag": "^2.1.0",
+        "hasown": "^2.0.2",
+        "mime-types": "^2.1.12"
+      },
+      "engines": {
+        "node": ">= 6"
+      }
+    },
+    "node_modules/function-bind": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
+      "integrity": "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==",
+      "license": "MIT",
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/get-intrinsic": {
+      "version": "1.3.0",
+      "resolved": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
+      "integrity": "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bind-apply-helpers": "^1.0.2",
+        "es-define-property": "^1.0.1",
+        "es-errors": "^1.3.0",
+        "es-object-atoms": "^1.1.1",
+        "function-bind": "^1.1.2",
+        "get-proto": "^1.0.1",
+        "gopd": "^1.2.0",
+        "has-symbols": "^1.1.0",
+        "hasown": "^2.0.2",
+        "math-intrinsics": "^1.1.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/get-proto": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz",
+      "integrity": "sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==",
+      "license": "MIT",
+      "dependencies": {
+        "dunder-proto": "^1.0.1",
+        "es-object-atoms": "^1.0.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/gopd": {
+      "version": "1.2.0",
+      "resolved": "https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz",
+      "integrity": "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/has-symbols": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz",
+      "integrity": "sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/has-tostringtag": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/has-tostringtag/-/has-tostringtag-1.0.2.tgz",
+      "integrity": "sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==",
+      "license": "MIT",
+      "dependencies": {
+        "has-symbols": "^1.0.3"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/hasown": {
+      "version": "2.0.2",
+      "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.2.tgz",
+      "integrity": "sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==",
+      "license": "MIT",
+      "dependencies": {
+        "function-bind": "^1.1.2"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/math-intrinsics": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
+      "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/mime-db": {
+      "version": "1.52.0",
+      "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz",
+      "integrity": "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/mime-types": {
+      "version": "2.1.35",
+      "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
+      "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
+      "license": "MIT",
+      "dependencies": {
+        "mime-db": "1.52.0"
+      },
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/proxy-from-env": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-1.1.0.tgz",
+      "integrity": "sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg==",
+      "license": "MIT"
+    }
+  }
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\package.json =====
+{
+  "name": "system-daemon",
+  "version": "1.0.0",
+  "main": "daemon.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "axios": "^1.13.2"
+  }
+}
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\security.js =====
+const fs = require("fs");
+const crypto = require("crypto");
+
+/**
+ * Berechnet SHA256-Hash einer Datei.
+ * @param {string} filePath
+ * @returns {Promise<string>} hex-Hash
+ */
+function sha256(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(filePath);
+
+    stream.on("error", reject);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+/**
+ * Prüft, ob der SHA256-Hash einer Datei dem erwarteten Hash entspricht.
+ * @param {string} filePath
+ * @param {string} expectedHash
+ * @returns {Promise<boolean>}
+ */
+async function verifySha256(filePath, expectedHash) {
+  const actual = await sha256(filePath);
+  return actual.toLowerCase() === expectedHash.toLowerCase();
+}
+
+/**
+ * Prüft eine RSA-Signatur für eine Datei.
+ * @param {string} filePath
+ * @param {string} signatureFile
+ * @param {string} publicKeyFile
+ * @returns {Promise<boolean>}
+ */
+async function verifySignature(filePath, signatureFile, publicKeyFile) {
+  const publicKey = fs.readFileSync(publicKeyFile, "utf8");
+  const signature = fs.readFileSync(signatureFile);
+
+  const verify = crypto.createVerify("RSA-SHA256");
+  const stream = fs.createReadStream(filePath);
+
+  return new Promise((resolve, reject) => {
+    stream.on("error", reject);
+    stream.on("data", (chunk) => verify.update(chunk));
+    stream.on("end", () => {
+      try {
+        const ok = verify.verify(publicKey, signature);
+        resolve(ok);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+module.exports = {
+  sha256,
+  verifySha256,
+  verifySignature
+};
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\selfUpdate.js =====
+const fs = require("fs");
+const path = require("path");
+const axios = require("axios");
+const AdmZip = require("adm-zip");
+
+/**
+ * Lädt eine Datei per HTTP/S herunter.
+ * @param {string} url
+ * @param {string} dest
+ */
+async function downloadFile(url, dest) {
+  const writer = fs.createWriteStream(dest);
+
+  const res = await axios.get(url, { responseType: "stream" });
+  return new Promise((resolve, reject) => {
+    res.data.pipe(writer);
+    let finished = false;
+    writer.on("finish", () => {
+      if (!finished) {
+        finished = true;
+        resolve();
+      }
+    });
+    writer.on("error", (err) => {
+      if (!finished) {
+        finished = true;
+        reject(err);
+      }
+    });
+  });
+}
+
+/**
+ * Wendet ein Self-Update für den Daemon an, falls konfiguriert.
+ * Diese Funktion ist bewusst defensiv: wenn etwas schief geht, wird nur geloggt.
+ */
+async function checkAndApplySelfUpdate(config, logger, security) {
+  if (!config.selfUpdate || !config.selfUpdate.enabled) {
+    return;
+  }
+
+  const { zipUrl, localZipPath } = config.selfUpdate;
+  if (!zipUrl && !localZipPath) {
+    return;
+  }
+
+  const baseDir = __dirname;
+  const currentDir = baseDir;
+  const stagingDir = path.join(baseDir, "..", "system-daemon.new");
+  const backupDir = path.join(baseDir, "..", "system-daemon.bak");
+  const zipPath =
+    localZipPath || path.join(baseDir, "daemon-update.zip");
+
+  try {
+    logger("info", "Prüfe auf Self-Update des Daemons...");
+
+    if (zipUrl) {
+      logger("info", `Lade Daemon-Update von ${zipUrl}...`);
+      await downloadFile(zipUrl, zipPath);
+    } else if (!fs.existsSync(zipPath)) {
+      logger("debug", "Kein Self-Update ZIP gefunden, überspringe.");
+      return;
+    }
+
+    // Optional: Hash- / Signaturprüfung
+    if (config.security && config.security.requireHash && config.selfUpdate.hashUrl) {
+      const hashRes = await axios.get(config.selfUpdate.hashUrl, { responseType: "text" });
+      const expectedHash = hashRes.data.trim().split(/\s+/)[0];
+      const ok = await security.verifySha256(zipPath, expectedHash);
+      if (!ok) {
+        logger("error", "Self-Update Hashprüfung fehlgeschlagen, breche ab.");
+        return;
+      }
+    }
+
+    if (config.security && config.security.requireSignature && config.selfUpdate.signatureUrl) {
+      const signaturePath = zipPath + ".sig";
+      const sigRes = await axios.get(config.selfUpdate.signatureUrl, { responseType: "arraybuffer" });
+      fs.writeFileSync(signaturePath, Buffer.from(sigRes.data));
+      const ok = await security.verifySignature(
+        zipPath,
+        signaturePath,
+        config.security.publicKeyFile
+      );
+      if (!ok) {
+        logger("error", "Self-Update Signaturprüfung fehlgeschlagen, breche ab.");
+        return;
+      }
+    }
+
+    logger("info", "Entpacke Self-Update ZIP in Staging...");
+    if (fs.existsSync(stagingDir)) {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    }
+    fs.mkdirSync(stagingDir, { recursive: true });
+
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(stagingDir, true);
+
+    // Atomic Swap: aktuelles system-daemon verschieben, neues an seine Stelle.
+    logger("info", "Wende Self-Update atomar an...");
+
+    if (fs.existsSync(backupDir)) {
+      fs.rmSync(backupDir, { recursive: true, force: true });
+    }
+
+    fs.renameSync(currentDir, backupDir);
+    fs.renameSync(stagingDir, currentDir);
+
+    logger("info", "Self-Update des Daemons wurde vorbereitet. Neuer Code wird beim nächsten Start aktiv.");
+
+  } catch (err) {
+    logger("error", "Fehler beim Self-Update des Daemons", { error: err.message });
+  }
+}
+
+module.exports = {
+  checkAndApplySelfUpdate
+};
+
+
+
+===== FILE: C:\Users\leoa\customer-dashboard-v2\system-daemon\targets\docker-dashboard.js =====
+// system-daemon/targets/docker-dashboard.js
+const fs = require("fs");
+const path = require("path");
+const { spawn } = require("child_process");
+
+/**
+ * Zentrale Log-Funktion für Daemon & Targets.
+ * Schreibt JSON-Zeilen in eine Logdatei, damit sowohl Menschen
+ * als auch Maschinen das gut lesen/analysieren können.
+ *
+ * Felder:
+ *  - ts:    ISO-Zeitstempel
+ *  - level: debug|info|warn|error
+ *  - msg:   kurze, klare Beschreibung
+ *  - extra: optionale Zusatzinfos (z.B. Version, Dauer, Fehlertext)
+ */
+function log(level, message, config, extra = undefined) {
+  const logFile =
+    (config &&
+      config.logging &&
+      config.logging.logFile) ||
+    (config &&
+      config.notification &&
+      config.notification.logFile) ||
+    "C:\\CustomerDashboard\\logs\\daemon.log";
+
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    msg: message,
+    extra,
+  };
+
+  const line = JSON.stringify(entry) + "\n";
+
+  try {
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    fs.appendFileSync(logFile, line, "utf8");
+  } catch {
+    // Fallback zur Konsole, falls Datei nicht beschreibbar
+    console.log(
+      `[${entry.ts}] [${level}] ${message}`,
+      extra ? JSON.stringify(extra) : ""
+    );
+  }
+}
+
+/**
+ * Liest die aktuell installierte Version aus der .env-Datei.
+ */
+function readEnvVersion(config) {
+  const envFile = config.target.envFile;
+  const key = config.target.versionKey || "APP_VERSION";
+
+  if (!fs.existsSync(envFile)) {
+    return null;
+  }
+
+  const lines = fs.readFileSync(envFile, "utf8").split(/\r?\n/);
+  const line = lines.find((l) => l.startsWith(key + "="));
+  if (!line) return null;
+
+  const value = line.substring(key.length + 1).trim();
+  return value || null;
+}
+
+/**
+ * Schreibt eine Version in die .env-Datei (APP_VERSION=...).
+ */
+function writeEnvVersion(config, version) {
+  const envFile = config.target.envFile;
+  const key = config.target.versionKey || "APP_VERSION";
+
+  let lines = [];
+  if (fs.existsSync(envFile)) {
+    lines = fs.readFileSync(envFile, "utf8").split(/\r?\n/);
+  }
+
+  let found = false;
+  const newLines = lines.map((line) => {
+    if (line.startsWith(key + "=")) {
+      found = true;
+      return `${key}=${version}`;
+    }
+    return line;
+  });
+
+  if (!found) {
+    newLines.push(`${key}=${version}`);
+  }
+
+  fs.writeFileSync(envFile, newLines.join("\n"), "utf8");
+}
+
+/**
+ * Führt ein Kommando (z. B. docker) aus, sammelt stdout/stderr
+ * und loggt Start, Ende, Fehlercode & Dauer.
+ */
+function runCommand(command, args, options = {}, config) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    log("info", `Prozess gestartet: ${command} ${args.join(" ")}`, config);
+
+    const child = spawn(command, args, {
+      shell: false,
+      ...options,
+    });
+
+    let output = "";
+    let errorOutput = "";
+
+    child.stdout.on("data", (data) => {
+      output += data.toString();
+    });
+
+    child.stderr.on("data", (data) => {
+      errorOutput += data.toString();
+    });
+
+    child.on("error", (err) => {
+      log("error", `Prozessfehler beim Start von ${command}`, config, {
+        error: err.message,
+      });
+      reject(err);
+    });
+
+    child.on("close", (code) => {
+      const durationMs = Date.now() - started;
+
+      if (code === 0) {
+        log("info", `Prozess erfolgreich beendet: ${command}`, config, {
+          exitCode: code,
+          durationMs,
+          output: output.trim(),
+        });
+        resolve(output);
+      } else {
+        log("error", `Prozess mit Fehler beendet: ${command}`, config, {
+          exitCode: code,
+          durationMs,
+          stderr: errorOutput.trim(),
+        });
+        reject(
+          new Error(
+            `${command} exited with code ${code}: ${errorOutput.trim()}`
+          )
+        );
+      }
+    });
+  });
+}
+
+/**
+ * Lädt ein Docker-Image (docker pull).
+ */
+async function downloadImage(config, version) {
+  const template = config.sources.github.imageTemplate;
+  const image = template.replace("{version}", version);
+
+  log("info", "Starte Download des Docker-Images", config, {
+    image,
+    version,
+  });
+
+  await runCommand("docker", ["pull", image], {}, config);
+
+  log("info", "Docker-Image erfolgreich geladen", config, {
+    image,
+    version,
+  });
+
+  return image;
+}
+
+/**
+ * Startet das Dashboard via docker compose neu:
+ *  - docker compose down
+ *  - docker compose pull
+ *  - docker compose up -d
+ */
+async function restartDashboard(config) {
+  const composeFile = config.target.composeFile;
+
+  log("info", "Starte Docker-Restart des Dashboards", config, {
+    composeFile,
+  });
+
+  await runCommand(
+    "docker",
+    ["compose", "-f", composeFile, "down"],
+    {},
+    config
+  );
+
+  await runCommand(
+    "docker",
+    ["compose", "-f", composeFile, "pull"],
+    {},
+    config
+  );
+
+  await runCommand(
+    "docker",
+    ["compose", "-f", composeFile, "up", "-d"],
+    {},
+    config
+  );
+
+  log("info", "Docker-Restart abgeschlossen", config, {
+    composeFile,
+  });
+}
+
+/**
+ * Healthcheck: /api/health des Dashboards.
+ * Versucht mehrfach (bis zu maxAttempts), mit Wartezeit dazwischen.
+ */
+async function checkHealth(config, maxAttempts = 20, delayMs = 2000) {
+  const url = config.target.healthUrl;
+  if (!url) {
+    // Wenn kein Healthcheck definiert ist, gehen wir von OK aus
+    return true;
+  }
+
+  const http = url.startsWith("https") ? require("https") : require("http");
+
+  log("info", "Starte Healthcheck für Dashboard", config, { url });
+
+  return new Promise((resolve) => {
+    const tryCheck = (attempt) => {
+      const started = Date.now();
+
+      const req = http.get(url, (res) => {
+        res.resume(); // Body wird nicht benötigt
+
+        const ok = res.statusCode >= 200 && res.statusCode < 400;
+        const durationMs = Date.now() - started;
+
+        if (ok) {
+          log(
+            "info",
+            "Healthcheck erfolgreich",
+            config,
+            { attempt, statusCode: res.statusCode, durationMs }
+          );
+          return resolve(true);
+        }
+
+        log(
+          "warn",
+          "Healthcheck nicht erfolgreich",
+          config,
+          { attempt, statusCode: res.statusCode, durationMs }
+        );
+
+        if (attempt >= maxAttempts) {
+          log(
+            "error",
+            "Healthcheck endgültig fehlgeschlagen (Maximale Versuche erreicht)",
+            config,
+            { attempts: attempt }
+          );
+          return resolve(false);
+        }
+
+        setTimeout(() => tryCheck(attempt + 1), delayMs);
+      });
+
+      req.on("error", (err) => {
+        const durationMs = Date.now() - started;
+
+        log(
+          "warn",
+          "Healthcheck-Request fehlgeschlagen",
+          config,
+          { attempt, error: err.message, durationMs }
+        );
+
+        if (attempt >= maxAttempts) {
+          log(
+            "error",
+            "Healthcheck endgültig fehlgeschlagen (Netzwerkfehler)",
+            config,
+            { attempts: attempt }
+          );
+          return resolve(false);
+        }
+
+        setTimeout(() => tryCheck(attempt + 1), delayMs);
+      });
+
+      req.setTimeout(5000, () => {
+        req.destroy(new Error("Healthcheck Timeout"));
+      });
+    };
+
+    tryCheck(1);
+  });
+}
+
+module.exports = {
+  log,
+  readEnvVersion,
+  writeEnvVersion,
+  downloadImage,
+  restartDashboard,
+  checkHealth,
+  runCommand, // optional, falls du es später im Daemon nutzen möchtest
+};
+
 
 
