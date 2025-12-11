@@ -158,32 +158,35 @@ if ($ok) {
 }
 
 # -------------------------------------------------------------
-# 9. Auto-Updater installieren (NACH erfolgreichem Start!)
+# 9. Auto-Updater installieren
 # -------------------------------------------------------------
 Write-Host "Installiere Auto-Update Daemon..."
 
-$nodePath = (Get-Command node.exe).Source
-$daemonPath = "C:\CustomerDashboard\system-daemon\daemon.js"
-$workingDir = "C:\CustomerDashboard\system-daemon"
-
+# Alte Tasks löschen
 schtasks /delete /tn "CustomerDashboardAutoUpdater" /f 2>$null
 
+# Node-Binary und Daemon-Pfad
+$nodePath    = "C:\Program Files\nodejs\node.exe"
+$daemonPath  = "C:\CustomerDashboard\system-daemon\daemon.js"
+$workingDir  = "C:\CustomerDashboard\system-daemon"
+
+# Action korrekt quoten!
 $action = New-ScheduledTaskAction `
     -Execute $nodePath `
     -Argument "`"$daemonPath`"" `
     -WorkingDirectory $workingDir
 
+# Trigger: on startup
 $triggerBoot = New-ScheduledTaskTrigger -AtStartup
 
-$startTime = (Get-Date).AddMinutes(1).ToString("HH:mm")
-$duration = (New-TimeSpan -Days 3650)
-
+# Trigger: every 5 minutes
 $triggerRepeat = New-ScheduledTaskTrigger `
     -Once `
-    -At $startTime `
+    -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 5) `
-    -RepetitionDuration $duration
+    -RepetitionDuration (New-TimeSpan -Days 3650)
 
+# Register task
 Register-ScheduledTask `
     -TaskName "CustomerDashboardAutoUpdater" `
     -Action $action `
@@ -192,6 +195,11 @@ Register-ScheduledTask `
     -User "SYSTEM"
 
 Write-Host "Auto-Update Daemon installiert (SYSTEM Task)."
+
+# ---- Task sofort ausführen ----
+Start-Sleep -Seconds 2
+schtasks /run /tn "CustomerDashboardAutoUpdater"
+Write-Host "Daemon gestartet."
 
 # -------------------------------------------------------------
 # 10. Fertig
