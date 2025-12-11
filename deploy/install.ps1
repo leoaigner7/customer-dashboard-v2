@@ -134,7 +134,7 @@ docker compose -f "$composeFilePath" up -d
 # -------------------------------------------------------------
 # 8. ROBUSTER HEALTHCHECK (statt 10 Sekunden warten)
 # -------------------------------------------------------------
-Write-Host "Prüfe Dashboard Healthcheck..."
+Write-Host "Pruefe Dashboard Healthcheck..."
 
 $healthUrl = "http://localhost:$port/api/health"
 $ok = $false
@@ -160,39 +160,24 @@ if ($ok) {
 
 
 Write-Host "Beende ALLE alten node.exe Prozesse..."
-
-# Stoppe alle Node-Prozesse – auch SYSTEM – sauber und vollständig
 Get-Process node -ErrorAction SilentlyContinue | ForEach-Object {
-    try {
-        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-    } catch {}
+    try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {}
 }
 Start-Sleep -Seconds 1
 
-Write-Host "Entferne alten Scheduled Task (falls vorhanden)..."
+Write-Host "Entferne alten Scheduled Task..."
 schtasks /delete /tn CustomerDashboardAutoUpdater /f 2>$null
 
 Write-Host "Erstelle neuen Scheduled Task..."
 
+# ACTION MUSS ALS EINE KOMPLETTE STRINGKETTE DEFINIERT WERDEN
 $action = '"C:\Program Files\nodejs\node.exe" "C:\CustomerDashboard\system-daemon\daemon.js"'
 
-schtasks /create `
-    /tn "CustomerDashboardAutoUpdater" `
-    /sc minute /mo 5 `
-    /tr $action `
-    /ru SYSTEM `
-    /RL HIGHEST `
-    /F `
-    /I 999999999 `
-    /NP
-
-# /I 999999999  = erlaubt kein automatisches Parallel-Starten
-# /RL HIGHEST   = höchste Rechte → keine Berechtigungsprobleme
-# /ru SYSTEM    = läuft immer, egal welcher Benutzer angemeldet ist
+# SCHTASKS DARF NICHT ESCAPED WERDEN Darum KEINE BACKTICKS, KEINE "
+cmd.exe /c "schtasks /create /tn CustomerDashboardAutoUpdater /sc minute /mo 5 /tr $action /ru SYSTEM /RL HIGHEST /F"
 
 Write-Host "Starte Task einmalig..."
-schtasks /run /tn CustomerDashboardAutoUpdater
-Write-Host "Daemon gestartet."
+cmd.exe /c "schtasks /run /tn CustomerDashboardAutoUpdater"
 
 # -------------------------------------------------------------
 # 10. Fertig
