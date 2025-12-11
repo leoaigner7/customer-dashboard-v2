@@ -165,19 +165,15 @@ Get-Process node -ErrorAction SilentlyContinue | ForEach-Object {
 }
 Start-Sleep -Seconds 1
 
-Write-Host "Entferne alten Scheduled Task..."
-schtasks /delete /tn CustomerDashboardAutoUpdater /f 2>$null
+Write-Host "Erstelle neuen Scheduled Task über CMD..." -ForegroundColor Cyan
 
-Write-Host "Erstelle neuen Scheduled Task..."
+$cmd = 'schtasks /create /tn CustomerDashboardAutoUpdater /sc minute /mo 5 /tr "\"C:\Program Files\nodejs\node.exe\" \"C:\CustomerDashboard\system-daemon\daemon.js\"" /ru SYSTEM /f'
 
-# ACTION MUSS ALS EINE KOMPLETTE STRINGKETTE DEFINIERT WERDEN
-$action = '"C:\Program Files\nodejs\node.exe" "C:\CustomerDashboard\system-daemon\daemon.js"'
+cmd.exe /c $cmd
 
-# SCHTASKS DARF NICHT ESCAPED WERDEN Darum KEINE BACKTICKS, KEINE "
-cmd.exe /c "schtasks /create /tn CustomerDashboardAutoUpdater /sc minute /mo 5 /tr $action /ru SYSTEM /RL HIGHEST /F"
-
-Write-Host "Starte Task einmalig..."
+Write-Host "Starte Task einmalig..." -ForegroundColor Cyan
 cmd.exe /c "schtasks /run /tn CustomerDashboardAutoUpdater"
+
 
 # -------------------------------------------------------------
 # 10. Fertig
