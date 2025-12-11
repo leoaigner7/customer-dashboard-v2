@@ -157,48 +157,41 @@ if ($ok) {
     Write-Host "WARNUNG: Dashboard antwortet nicht sauber, fahre trotzdem fort." -ForegroundColor Yellow
 }
 
-# -------------------------------------------------------------
-# 9. Auto-Updater installieren
-# -------------------------------------------------------------
-Write-Host "Installiere Auto-Update Daemon..."
 
-# Alte Tasks löschen
-schtasks /delete /tn "CustomerDashboardAutoUpdater" /f 2>$null
 
-# Node-Binary und Daemon-Pfad
-$nodePath    = "C:\Program Files\nodejs\node.exe"
-$daemonPath  = "C:\CustomerDashboard\system-daemon\daemon.js"
-$workingDir  = "C:\CustomerDashboard\system-daemon"
+Write-Host "Beende ALLE alten node.exe Prozesse..."
 
-# Action korrekt quoten!
-$action = New-ScheduledTaskAction `
-    -Execute $nodePath `
-    -Argument "`"$daemonPath`"" `
-    -WorkingDirectory $workingDir
+# Stoppe alle Node-Prozesse – auch SYSTEM – sauber und vollständig
+Get-Process node -ErrorAction SilentlyContinue | ForEach-Object {
+    try {
+        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    } catch {}
+}
+Start-Sleep -Seconds 1
 
-# Trigger: on startup
-$triggerBoot = New-ScheduledTaskTrigger -AtStartup
+Write-Host "Entferne alten Scheduled Task (falls vorhanden)..."
+schtasks /delete /tn CustomerDashboardAutoUpdater /f 2>$null
 
-# Trigger: every 5 minutes
-$triggerRepeat = New-ScheduledTaskTrigger `
-    -Once `
-    -At (Get-Date).AddMinutes(1) `
-    -RepetitionInterval (New-TimeSpan -Minutes 5) `
-    -RepetitionDuration (New-TimeSpan -Days 3650)
+Write-Host "Erstelle neuen Scheduled Task..."
 
-# Register task
-Register-ScheduledTask `
-    -TaskName "CustomerDashboardAutoUpdater" `
-    -Action $action `
-    -Trigger $triggerBoot, $triggerRepeat `
-    -RunLevel Highest `
-    -User "SYSTEM"
+$action = '"C:\Program Files\nodejs\node.exe" "C:\CustomerDashboard\system-daemon\daemon.js"'
 
-Write-Host "Auto-Update Daemon installiert (SYSTEM Task)."
+schtasks /create `
+    /tn "CustomerDashboardAutoUpdater" `
+    /sc minute /mo 5 `
+    /tr $action `
+    /ru SYSTEM `
+    /RL HIGHEST `
+    /F `
+    /I 999999999 `
+    /NP
 
-# ---- Task sofort ausführen ----
-Start-Sleep -Seconds 2
-schtasks /run /tn "CustomerDashboardAutoUpdater"
+# /I 999999999  = erlaubt kein automatisches Parallel-Starten
+# /RL HIGHEST   = höchste Rechte → keine Berechtigungsprobleme
+# /ru SYSTEM    = läuft immer, egal welcher Benutzer angemeldet ist
+
+Write-Host "Starte Task einmalig..."
+schtasks /run /tn CustomerDashboardAutoUpdater
 Write-Host "Daemon gestartet."
 
 # -------------------------------------------------------------
