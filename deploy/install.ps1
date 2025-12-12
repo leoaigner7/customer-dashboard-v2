@@ -44,7 +44,7 @@ New-Item -ItemType Directory -Force -Path $LogDir        | Out-Null
 
 
 # SYSTEM-Rechte setzen (kritisch für Daemon!)
-icacls $InstallDir /grant SYSTEM:(OI)(CI)F /T | Out-Null
+cmd /c "icacls `"$InstallDir`" /grant SYSTEM:(OI)(CI)F /T" | Out-Null
 
 # -------------------------------------------------------------
 # 3. Robuster Kopiervorgang
