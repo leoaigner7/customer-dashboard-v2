@@ -163,27 +163,40 @@ if ($ok) {
 
 
 
-Write-Host "[5/7] Installiere Auto-Update-Daemon (SYSTEM)..."
+Write-Host "[5/7] Installiere Auto-Update-Daemon als Windows-Service..."
 
-schtasks /delete /tn $TaskName /f 2>$null
+$NssmExe = "$deployDir\tools\nssm.exe"
+$ServiceName = "CustomerDashboardAutoUpdater"
 
-$nodePath   = (Get-Command node.exe).Source
-$daemonPath = "$TargetDaemon\daemon.js"
+if (-not (Test-Path $NssmExe)) {
+    Write-Host "FEHLER: nssm.exe fehlt!" -ForegroundColor Red
+    exit 1
+}
 
-$action = New-ScheduledTaskAction `
-  -Execute $nodePath `
-  -Argument "`"$daemonPath`"" `
-  -WorkingDirectory $TargetDaemon
+$NodeExe   = "C:\Program Files\nodejs\node.exe"
+$DaemonJs  = "$TargetDaemon\daemon.js"
 
-$trigger = New-ScheduledTaskTrigger -AtStartup
+# Alten Service entfernen (falls vorhanden)
+& $NssmExe stop $ServiceName 2>$null
+& $NssmExe remove $ServiceName confirm 2>$null
 
-Register-ScheduledTask `
-  -TaskName $TaskName `
-  -Action $action `
-  -Trigger $trigger `
-  -RunLevel Highest `
-  -User "SYSTEM" `
-  -Force
+# Service anlegen
+& $NssmExe install $ServiceName $NodeExe "`"$DaemonJs`""
+
+# Arbeitsverzeichnis (KRITISCH!)
+& $NssmExe set $ServiceName AppDirectory $TargetDaemon
+
+# Logging
+& $NssmExe set $ServiceName AppStdout "$LogDir\daemon-service.out.log"
+& $NssmExe set $ServiceName AppStderr "$LogDir\daemon-service.err.log"
+
+# Neustart bei Crash
+& $NssmExe set $ServiceName AppRestartDelay 5000
+& $NssmExe set $ServiceName Start SERVICE_AUTO_START
+
+# Service starten
+& $NssmExe start $ServiceName
+
 
 # -------------------------------------------------------------
 # 10. Fertig
