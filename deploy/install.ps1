@@ -42,6 +42,10 @@ New-Item -ItemType Directory -Force -Path $TargetDeploy  | Out-Null
 New-Item -ItemType Directory -Force -Path $TargetDaemon  | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir        | Out-Null
 
+
+# SYSTEM-Rechte setzen (kritisch für Daemon!)
+icacls $InstallDir /grant SYSTEM:(OI)(CI)F /T | Out-Null
+
 # -------------------------------------------------------------
 # 3. Robuster Kopiervorgang
 # -------------------------------------------------------------
@@ -159,21 +163,27 @@ if ($ok) {
 
 
 
-Write-Host "Beende ALLE alten node.exe Prozesse..."
-Get-Process node -ErrorAction SilentlyContinue | ForEach-Object {
-    try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {}
-}
-Start-Sleep -Seconds 1
+Write-Host "[5/7] Installiere Auto-Update-Daemon (SYSTEM)..."
 
-Write-Host "Erstelle neuen Scheduled Task über CMD..." -ForegroundColor Cyan
 
-$cmd = 'schtasks /create /tn CustomerDashboardAutoUpdater /sc minute /mo 5 /tr "\"C:\Program Files\nodejs\node.exe\" \"C:\CustomerDashboard\system-daemon\daemon.js\"" /ru SYSTEM /f'
+schtasks /delete /tn $TaskName /f 2>$null
 
-cmd.exe /c $cmd
 
-Write-Host "Starte Task einmalig..." -ForegroundColor Cyan
-cmd.exe /c "schtasks /run /tn CustomerDashboardAutoUpdater"
+$nodePath = (Get-Command node.exe).Source
+$daemonPath = "$TargetDaemon\daemon.js"
 
+
+$action = New-ScheduledTaskAction -Execute $nodePath -Argument "`"$daemonPath`"" -WorkingDirectory $TargetDaemon
+
+
+$triggerBoot = New-ScheduledTaskTrigger -AtStartup
+$triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+-RepetitionInterval (New-TimeSpan -Minutes 5) `
+-RepetitionDuration (New-TimeSpan -Days 3650)
+
+
+Register-ScheduledTask -TaskName $TaskName -Action $action `
+-Trigger $triggerBoot, $triggerRepeat -RunLevel Highest -User "SYSTEM" -Force
 
 # -------------------------------------------------------------
 # 10. Fertig
