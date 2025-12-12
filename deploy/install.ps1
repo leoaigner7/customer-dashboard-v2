@@ -165,25 +165,25 @@ if ($ok) {
 
 Write-Host "[5/7] Installiere Auto-Update-Daemon (SYSTEM)..."
 
-
 schtasks /delete /tn $TaskName /f 2>$null
 
-
-$nodePath = (Get-Command node.exe).Source
+$nodePath   = (Get-Command node.exe).Source
 $daemonPath = "$TargetDaemon\daemon.js"
 
+$action = New-ScheduledTaskAction `
+  -Execute $nodePath `
+  -Argument "`"$daemonPath`"" `
+  -WorkingDirectory $TargetDaemon
 
-$action = New-ScheduledTaskAction -Execute $nodePath -Argument "`"$daemonPath`"" -WorkingDirectory $TargetDaemon
+$trigger = New-ScheduledTaskTrigger -AtStartup
 
-
-$triggerBoot = New-ScheduledTaskTrigger -AtStartup
-$triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
--RepetitionInterval (New-TimeSpan -Minutes 5) `
--RepetitionDuration (New-TimeSpan -Days 3650)
-
-
-Register-ScheduledTask -TaskName $TaskName -Action $action `
--Trigger $triggerBoot, $triggerRepeat -RunLevel Highest -User "SYSTEM" -Force
+Register-ScheduledTask `
+  -TaskName $TaskName `
+  -Action $action `
+  -Trigger $trigger `
+  -RunLevel Highest `
+  -User "SYSTEM" `
+  -Force
 
 # -------------------------------------------------------------
 # 10. Fertig

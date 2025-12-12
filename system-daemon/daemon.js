@@ -1,3 +1,11 @@
+// ------------------------------------------------------------
+// BOOT-SAFETY (entscheidend für SYSTEM + Task Scheduler)
+// ------------------------------------------------------------
+process.chdir(__dirname);
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 // system-daemon/daemon.js
 
 /********************************************************************
@@ -578,8 +586,13 @@ async function main() {
   // Optional: Self-Update des Daemons
   await checkAndApplySelfUpdate(config, log, security);
 
+  // beim Systemstart warten (Docker / Netzwerk / localhost)
+await sleep(60_000);
+
+while (true) {
   await checkOnce();
-  setInterval(checkOnce, intervalMs);
+  await sleep(intervalMs);
+}
 }
 
 main().catch((err) => {
