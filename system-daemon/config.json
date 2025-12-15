@@ -67,7 +67,7 @@
   },
 
   "policy": {
-    "pinnedVersion": "6.9.0",
+    "pinnedVersion": null,
     "allowDowngrade": false
   }
 }
