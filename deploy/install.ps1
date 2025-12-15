@@ -175,7 +175,7 @@ Start-Process -FilePath $NodeExe -ArgumentList $DaemonJs -WorkingDirectory $Daem
 Start-Sleep 2
 
 if (-not (Get-Process node -ErrorAction SilentlyContinue)) {
-    Write-Error "Node läuft NICHT – Start fehlgeschlagen"
+    Write-Error "Node läuft NICHT Start fehlgeschlagen"
     exit 1
 }
 
