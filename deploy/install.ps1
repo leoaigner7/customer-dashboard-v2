@@ -168,7 +168,6 @@ Write-Host "[5/7] Installiere Auto-Update-Daemon (Autostart)..."
 $CmdFile = "$TargetDaemon\run-daemon.cmd"
 $StartupDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $StartupCmd = "$StartupDir\CustomerDashboardAutoUpdater.cmd"
-
 # run-daemon.cmd erzeugen
 @"
 @echo off
