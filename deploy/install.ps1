@@ -169,11 +169,10 @@ $NodeExe   = "C:\Program Files\nodejs\node.exe"
 $DaemonJs = "C:\CustomerDashboard\system-daemon\daemon.js"
 $DaemonWd = "C:\CustomerDashboard\system-daemon"
 
-Start-Process `
-  -FilePath $NodeExe `
-  -ArgumentList "`"$DaemonJs`"" `
-  -WorkingDirectory $DaemonWd `
-  -WindowStyle Hidden
+Start-Process -FilePath $NodeExe `
+              -ArgumentList $DaemonJs `
+              -WorkingDirectory $DaemonWd `
+              -WindowStyle Hidden
 
 Start-Sleep 2
 
