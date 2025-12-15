@@ -165,19 +165,24 @@ if ($ok) {
 
 Write-Host "Starte Auto-Update-Daemon jetzt (wie manuell)..."
 
+$NodeExe   = "C:\Program Files\nodejs\node.exe"
+$DaemonJs = "C:\CustomerDashboard\system-daemon\daemon.js"
+$DaemonWd = "C:\CustomerDashboard\system-daemon"
+
 Start-Process `
-  -FilePath "C:\Program Files\nodejs\node.exe" `
-  -ArgumentList "`"C:\CustomerDashboard\system-daemon\daemon.js`"" `
-  -WorkingDirectory "C:\CustomerDashboard\system-daemon" `
+  -FilePath $NodeExe `
+  -ArgumentList "`"$DaemonJs`"" `
+  -WorkingDirectory $DaemonWd `
   -WindowStyle Hidden
 
 Start-Sleep 2
 
 if (-not (Get-Process node -ErrorAction SilentlyContinue)) {
     Write-Error "Node läuft NICHT – Start fehlgeschlagen"
-} else {
-    Write-Host "Node läuft erfolgreich." -ForegroundColor Green
+    exit 1
 }
+
+Write-Host "Node läuft erfolgreich (manueller Start automatisiert)." -ForegroundColor Green
 
 
 # -------------------------------------------------------------
