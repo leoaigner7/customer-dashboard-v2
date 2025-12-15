@@ -163,52 +163,26 @@ if ($ok) {
 
 
 
-Write-Host "[5/7] Installiere Auto-Update-Daemon (manueller Start automatisiert)..."
+Write-Host "[5/7] Installiere Auto-Update-Daemon (Autostart)..."
 
-$TaskName = "CustomerDashboardAutoUpdater"
-$CmdFile  = "$TargetDaemon\run-daemon.cmd"
+$CmdFile = "$TargetDaemon\run-daemon.cmd"
+$StartupDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+$StartupCmd = "$StartupDir\CustomerDashboardAutoUpdater.cmd"
 
-# -------------------------------------------------------------
-# CMD-Wrapper erzeugen (EXAKT wie manueller Start)
-# -------------------------------------------------------------
+# run-daemon.cmd erzeugen
 @"
 @echo off
 cd /d C:\CustomerDashboard\system-daemon
 "C:\Program Files\nodejs\node.exe" "daemon.js"
 "@ | Set-Content -Encoding ASCII $CmdFile
 
-# -------------------------------------------------------------
-# Alten Task entfernen
-# -------------------------------------------------------------
-schtasks /delete /tn $TaskName /f 2>$null | Out-Null
+# Autostart-Eintrag erzeugen
+@"
+@echo off
+start "" /min "$CmdFile"
+"@ | Set-Content -Encoding ASCII $StartupCmd
 
-# -------------------------------------------------------------
-# Scheduled Task = identisch zu manuellem Start
-# -------------------------------------------------------------
-schtasks /create `
- /tn $TaskName `
- /tr "cmd.exe /c start """" /b `"$CmdFile`"" `
- /sc onstart `
- /ru "$env:USERNAME" `
- /rl HIGHEST `
- /f
-
-
-# -------------------------------------------------------------
-# Sofort starten
-# -------------------------------------------------------------
-schtasks /run /tn $TaskName
-Start-Sleep -Seconds 3
-
-# -------------------------------------------------------------
-# Verifikation
-# -------------------------------------------------------------
-if (-not (Get-Process node -ErrorAction SilentlyContinue)) {
-    Write-Host "FEHLER: Node läuft nicht!" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "Auto-Update-Daemon läuft dauerhaft." -ForegroundColor Green
+Write-Host "AutoUpdater wurde im Autostart registriert." -ForegroundColor Green
 
 
 
