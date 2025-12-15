@@ -32,7 +32,11 @@
     "github": {
       "enabled": true,
       "apiUrl": "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest",
-      "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}"
+      "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}",
+      "assetPrefix": "customer-dashboard-v2-",
+      "assetExt": ".zip",
+      "hashExt": ".sha256",
+      "sigExt": ".sig"    
     },
     "offlineZip": {
       "enabled": true,

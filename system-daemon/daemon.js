@@ -113,15 +113,35 @@ async function getGithubCandidate() {
 
     const tag =
       res.data.tag_name || res.data.name || res.data.version || null;
+
     if (!tag) {
       log("warn", "GitHub-Release ohne Versionsangabe erhalten.");
       return null;
     }
 
     const version = tag.replace(/^v/i, "");
+
+    // 🔐 SECURITY: pinnedVersion erzwingen
+    if (
+      config.policy &&
+      config.policy.pinnedVersion &&
+      version !== config.policy.pinnedVersion
+    ) {
+      log("info", "GitHub-Version ignoriert (nicht gepinnt).", {
+        found: version,
+        pinned: config.policy.pinnedVersion,
+      });
+      return null;
+    }
+
     const image = src.imageTemplate
       ? src.imageTemplate.replace("{version}", version)
       : null;
+
+    if (!image) {
+      log("warn", "Kein Docker-Image-Template konfiguriert.");
+      return null;
+    }
 
     return {
       source: "github",
@@ -136,6 +156,7 @@ async function getGithubCandidate() {
     return null;
   }
 }
+
 
 async function getOfflineZipCandidate() {
   const src = config.sources && config.sources.offlineZip;
