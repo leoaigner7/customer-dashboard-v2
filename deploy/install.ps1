@@ -1,146 +1,69 @@
-# Customer Dashboard Installer for Windows
-# VERSION 4.2 – FIXED HEALTHCHECK + SAFE START ORDER
+# =========================================================
+# Customer Dashboard Installer (VERSION 4.2 – CLEAN FIXED)
+# =========================================================
 
-Param(
+param (
     [string]$ComposeFile = "docker-compose.yml"
 )
 
-Write-Host "=== Customer Dashboard Installer (Windows) ===`n" -ForegroundColor Cyan
+Write-Host "=== Customer Dashboard Installer (Windows) ==="
 
 # -------------------------------------------------------------
 # 0. ADMIN CHECK
 # -------------------------------------------------------------
-If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole] "Administrator"))
-{
-    Write-Host "Dieses Skript muss als ADMINISTRATOR ausgeführt werden!" -ForegroundColor Red
-    Write-Host "Rechtsklick auf PowerShell → 'Als Administrator ausführen'" -ForegroundColor Yellow
+$principal = New-Object Security.Principal.WindowsPrincipal `
+    ([Security.Principal.WindowsIdentity]::GetCurrent())
+
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Error "Bitte PowerShell als Administrator starten."
     exit 1
 }
 
 # -------------------------------------------------------------
-# 1. Verzeichnisse bestimmen
+# 1. PATHS
 # -------------------------------------------------------------
-$deployDir   = $PSScriptRoot
-$packageRoot = Split-Path -Parent $PSScriptRoot
-
 $InstallDir   = "C:\CustomerDashboard"
-$TargetDeploy = "$InstallDir\deploy"
-$TargetDaemon = "$InstallDir\system-daemon"
+$DeployDir    = "$InstallDir\deploy"
+$DaemonDir    = "$InstallDir\system-daemon"
 $LogDir       = "$InstallDir\logs"
-$TaskName     = "CustomerDashboardAutoUpdater"
 
-Write-Host "Installer liegt in:      $deployDir"
-Write-Host "Paketwurzelverzeichnis: $packageRoot`n"
+$NodeExe   = "C:\Program Files\nodejs\node.exe"
+$DaemonJs = "$DaemonDir\daemon.js"
 
-# -------------------------------------------------------------
-# 2. Installationsverzeichnisse
-# -------------------------------------------------------------
-Write-Host "Erstelle Installationsverzeichnisse..."
-New-Item -ItemType Directory -Force -Path $InstallDir    | Out-Null
-New-Item -ItemType Directory -Force -Path $TargetDeploy  | Out-Null
-New-Item -ItemType Directory -Force -Path $TargetDaemon  | Out-Null
-New-Item -ItemType Directory -Force -Path $LogDir        | Out-Null
-
-
-# SYSTEM-Rechte setzen (kritisch für Daemon!)
-cmd /c "icacls `"$InstallDir`" /grant SYSTEM:(OI)(CI)F /T" | Out-Null
+Write-Host "Installationsverzeichnis: $InstallDir"
 
 # -------------------------------------------------------------
-# 3. Robuster Kopiervorgang
+# 2. DIRECTORIES
 # -------------------------------------------------------------
-function Copy-WithRetry($source, $target) {
-    $success = $false
+Write-Host "Erstelle Verzeichnisse..."
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+New-Item -ItemType Directory -Force -Path $DeployDir  | Out-Null
+New-Item -ItemType Directory -Force -Path $DaemonDir  | Out-Null
+New-Item -ItemType Directory -Force -Path $LogDir     | Out-Null
 
-    for ($i = 1; $i -le 5; $i++) {
-        try {
-            Copy-Item -Recurse -Force $source $target
-            $success = $true
-            break
-        } catch {
-            Start-Sleep -Milliseconds 500
-        }
-    }
-
-    if (-not $success) {
-        Write-Host "FEHLER: Kopieren von $source nach $target fehlgeschlagen!" -ForegroundColor Red
-        exit 1
-    }
-}
-
+# -------------------------------------------------------------
+# 3. COPY FILES (identisch zu FINAL CLEAN)
+# -------------------------------------------------------------
 Write-Host "Kopiere Dateien..."
-Copy-WithRetry "$deployDir\*" $TargetDeploy
-
-if (Test-Path "$deployDir\.env") {
-    Copy-WithRetry "$deployDir\.env" $TargetDeploy
-}
-
-$daemonSource = "$packageRoot\system-daemon"
-if (-not (Test-Path $daemonSource)) {
-    Write-Host "system-daemon wurde nicht gefunden!" -ForegroundColor Red
-    exit 1
-}
-Copy-WithRetry "$daemonSource\*" $TargetDaemon
+Copy-Item -Recurse -Force "..\deploy\*"        $DeployDir
+Copy-Item -Recurse -Force "..\system-daemon\*" $DaemonDir
 
 # -------------------------------------------------------------
-# 4. .env prüfen
+# 4. DOCKER
 # -------------------------------------------------------------
-$envPath = "$TargetDeploy\.env"
-
-$maxWait = 20
-$envFound = $false
-
-for ($i = 1; $i -le $maxWait; $i++) {
-    if (Test-Path $envPath) {
-        $envFound = $true
-        break
-    }
-    Start-Sleep -Milliseconds 200
-}
-
-if (-not $envFound) {
-    Write-Host "ERROR: .env ist nicht sichtbar in C:\CustomerDashboard\deploy!"
-    exit 1
-}
-
-$envLines = Get-Content $envPath
-$version  = ($envLines | Where-Object { $_ -match '^APP_VERSION=' }) -replace 'APP_VERSION=',''
-$portLine = ($envLines | Where-Object { $_ -match '^APP_PORT=' })
-$port     = if ($portLine) { $portLine -replace 'APP_PORT=','' } else { "8080" }
-
-Write-Host "Version: $version"
-Write-Host "Port:    $port`n"
-
-# -------------------------------------------------------------
-# 5. Compose-Datei prüfen
-# -------------------------------------------------------------
-$composeFilePath = Join-Path $TargetDeploy $ComposeFile
-if (-not (Test-Path $composeFilePath)) {
-    Write-Host "docker-compose.yml fehlt!" -ForegroundColor Red
-    exit 1
-}
-
-# -------------------------------------------------------------
-# 6. Container stoppen
-# -------------------------------------------------------------
-Write-Host "Stoppe alte Dashboard-Container..."
-docker compose -f "$composeFilePath" down | Out-Null
-
-# -------------------------------------------------------------
-# 7. Neues Image laden + Container starten
-# -------------------------------------------------------------
-Write-Host "⬇ Lade aktuelles Image..."
-docker compose -f "$composeFilePath" pull
-
 Write-Host "Starte Dashboard..."
-docker compose -f "$composeFilePath" up -d
+Set-Location $DeployDir
+
+docker compose down | Out-Null
+docker compose pull
+docker compose up -d
 
 # -------------------------------------------------------------
-# 8. ROBUSTER HEALTHCHECK (statt 10 Sekunden warten)
+# 5. HEALTHCHECK
 # -------------------------------------------------------------
-Write-Host "Pruefe Dashboard Healthcheck..."
+Write-Host "Prüfe Dashboard Healthcheck..."
 
-$healthUrl = "http://localhost:$port/api/health"
+$healthUrl = "http://localhost:8080/api/health"
 $ok = $false
 
 for ($i = 1; $i -le 20; $i++) {
@@ -156,36 +79,35 @@ for ($i = 1; $i -le 20; $i++) {
 }
 
 if ($ok) {
-    Write-Host "Dashboard erfolgreich gestartet!" -ForegroundColor Green
+    Write-Host "Dashboard erfolgreich gestartet." -ForegroundColor Green
 } else {
-    Write-Host "WARNUNG: Dashboard antwortet nicht sauber, fahre trotzdem fort." -ForegroundColor Yellow
+    Write-Host "WARNUNG: Dashboard antwortet nicht, fahre fort." -ForegroundColor Yellow
 }
 
+# -------------------------------------------------------------
+# 6. START NODE DAEMON (EXAKT WIE MANUELL)
+# -------------------------------------------------------------
+Write-Host "Starte Auto-Update-Daemon (identisch zu manuell)..."
 
-
-Write-Host "Starte Auto-Update-Daemon jetzt (wie manuell)..."
-
-$NodeExe   = "C:\Program Files\nodejs\node.exe"
-$DaemonJs = "C:\CustomerDashboard\system-daemon\daemon.js"
-$DaemonWd = "C:\CustomerDashboard\system-daemon"
-
-Start-Process -FilePath $NodeExe -ArgumentList $DaemonJs -WorkingDirectory $DaemonWd -WindowStyle Hidden
-
+Start-Process `
+    -FilePath $NodeExe `
+    -ArgumentList $DaemonJs `
+    -WorkingDirectory $DaemonDir `
+    -WindowStyle Hidden
 
 Start-Sleep 2
 
 if (-not (Get-Process node -ErrorAction SilentlyContinue)) {
-    Write-Error "Node läuft NICHT Start fehlgeschlagen"
+    Write-Error "Node-Daemon konnte nicht gestartet werden."
     exit 1
 }
 
-Write-Host "Node läuft erfolgreich (manueller Start automatisiert)." -ForegroundColor Green
-
+Write-Host "Node läuft erfolgreich." -ForegroundColor Green
 
 # -------------------------------------------------------------
-# 10. Fertig
+# 7. DONE
 # -------------------------------------------------------------
-Write-Host "`nINSTALLATION ABGESCHLOSSEN!" -ForegroundColor Green
-Write-Host "Dashboard: http://localhost:$port/"
-Write-Host "Auto-Update: $TaskName"
+Write-Host ""
+Write-Host "INSTALLATION ERFOLGREICH"
+Write-Host "Dashboard: http://localhost:8080/"
 Write-Host "Logs: $LogDir"
