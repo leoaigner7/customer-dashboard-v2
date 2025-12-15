@@ -163,26 +163,21 @@ if ($ok) {
 
 
 
-Write-Host "[5/7] Installiere Auto-Update-Daemon (Autostart)..."
+Write-Host "Starte Auto-Update-Daemon jetzt (wie manuell)..."
 
-$CmdFile = "$TargetDaemon\run-daemon.cmd"
-$StartupDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
-$StartupCmd = "$StartupDir\CustomerDashboardAutoUpdater.cmd"
-# run-daemon.cmd erzeugen
-@"
-@echo off
-cd /d C:\CustomerDashboard\system-daemon
-"C:\Program Files\nodejs\node.exe" "daemon.js"
-"@ | Set-Content -Encoding ASCII $CmdFile
+Start-Process `
+  -FilePath "C:\Program Files\nodejs\node.exe" `
+  -ArgumentList "`"C:\CustomerDashboard\system-daemon\daemon.js`"" `
+  -WorkingDirectory "C:\CustomerDashboard\system-daemon" `
+  -WindowStyle Hidden
 
-# Autostart-Eintrag erzeugen
-@"
-@echo off
-start "" /min "$CmdFile"
-"@ | Set-Content -Encoding ASCII $StartupCmd
+Start-Sleep 2
 
-Write-Host "AutoUpdater wurde im Autostart registriert." -ForegroundColor Green
-
+if (-not (Get-Process node -ErrorAction SilentlyContinue)) {
+    Write-Error "Node läuft NICHT – Start fehlgeschlagen"
+} else {
+    Write-Host "Node läuft erfolgreich." -ForegroundColor Green
+}
 
 
 # -------------------------------------------------------------
