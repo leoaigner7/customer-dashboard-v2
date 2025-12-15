@@ -187,11 +187,12 @@ schtasks /delete /tn $TaskName /f 2>$null | Out-Null
 # -------------------------------------------------------------
 schtasks /create `
  /tn $TaskName `
- /tr "`"$CmdFile`"" `
+ /tr "cmd.exe /c start """" /b `"$CmdFile`"" `
  /sc onstart `
  /ru "$env:USERNAME" `
  /rl HIGHEST `
  /f
+
 
 # -------------------------------------------------------------
 # Sofort starten
