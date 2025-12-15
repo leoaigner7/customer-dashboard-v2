@@ -163,39 +163,52 @@ if ($ok) {
 
 
 
-Write-Host "[5/7] Installiere Auto-Update-Daemon als Windows-Service..."
+Write-Host "[5/7] Installiere Auto-Update-Daemon (manueller Start automatisiert)..."
 
-$NssmExe = "$deployDir\tools\nssm.exe"
-$ServiceName = "CustomerDashboardAutoUpdater"
+$TaskName = "CustomerDashboardAutoUpdater"
+$CmdFile  = "$TargetDaemon\run-daemon.cmd"
 
-if (-not (Test-Path $NssmExe)) {
-    Write-Host "FEHLER: nssm.exe fehlt!" -ForegroundColor Red
+# -------------------------------------------------------------
+# CMD-Wrapper erzeugen (EXAKT wie manueller Start)
+# -------------------------------------------------------------
+@"
+@echo off
+cd /d C:\CustomerDashboard\system-daemon
+"C:\Program Files\nodejs\node.exe" "daemon.js"
+"@ | Set-Content -Encoding ASCII $CmdFile
+
+# -------------------------------------------------------------
+# Alten Task entfernen
+# -------------------------------------------------------------
+schtasks /delete /tn $TaskName /f 2>$null | Out-Null
+
+# -------------------------------------------------------------
+# Scheduled Task = identisch zu manuellem Start
+# -------------------------------------------------------------
+schtasks /create `
+ /tn $TaskName `
+ /tr "`"$CmdFile`"" `
+ /sc onstart `
+ /ru "$env:USERNAME" `
+ /rl HIGHEST `
+ /f
+
+# -------------------------------------------------------------
+# Sofort starten
+# -------------------------------------------------------------
+schtasks /run /tn $TaskName
+Start-Sleep -Seconds 3
+
+# -------------------------------------------------------------
+# Verifikation
+# -------------------------------------------------------------
+if (-not (Get-Process node -ErrorAction SilentlyContinue)) {
+    Write-Host "FEHLER: Node läuft nicht!" -ForegroundColor Red
     exit 1
 }
 
-$NodeExe   = "C:\Program Files\nodejs\node.exe"
-$DaemonJs  = "$TargetDaemon\daemon.js"
+Write-Host "Auto-Update-Daemon läuft dauerhaft." -ForegroundColor Green
 
-# Alten Service entfernen (falls vorhanden)
-& $NssmExe stop $ServiceName 2>$null
-& $NssmExe remove $ServiceName confirm 2>$null
-
-# Service anlegen
-& $NssmExe install $ServiceName $NodeExe "`"$DaemonJs`""
-
-# Arbeitsverzeichnis (KRITISCH!)
-& $NssmExe set $ServiceName AppDirectory $TargetDaemon
-
-# Logging
-& $NssmExe set $ServiceName AppStdout "$LogDir\daemon-service.out.log"
-& $NssmExe set $ServiceName AppStderr "$LogDir\daemon-service.err.log"
-
-# Neustart bei Crash
-& $NssmExe set $ServiceName AppRestartDelay 5000
-& $NssmExe set $ServiceName Start SERVICE_AUTO_START
-
-# Service starten
-& $NssmExe start $ServiceName
 
 
 # -------------------------------------------------------------
