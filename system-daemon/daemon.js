@@ -510,19 +510,41 @@ async function checkOnce() {
     try {
       if (candidate.artifactType === "docker-image") {
         await applyDockerUpdate(candidate, candidate.version);
-      } else if (candidate.artifactType === "zip") {
-        // Falls du später ZIP-Updates wieder aktivierst:
-        //  - ZIP entpacken
-        //  - deploy-Verzeichnis ersetzen
-        //  - target.restartDashboard(config)
-        throw new Error(
-          "ZIP-Updates sind in dieser Version des Updaters nicht implementiert."
-        );
-      } else {
-        throw new Error(
-          `Unbekannter Artifact-Typ: ${candidate.artifactType}`
-        );
-      }
+      }  else if (candidate.artifactType === "zip") {
+
+  log("info", "Prüfe ZIP-Integrität (Hash)...", {
+    zipPath: candidate.zipPath,
+  });
+
+  // --- SECURITY: HASH-PRÜFUNG ---
+  if (config.security && config.security.requireHash) {
+  if (!candidate.hashFile || !fs.existsSync(candidate.hashFile)) {
+    throw new Error("Hash-Datei fehlt für ZIP-Update.");
+  }
+
+  const expectedHash = fs
+    .readFileSync(candidate.hashFile, "utf8")
+    .split(" ")[0]
+    .trim();
+
+  const ok = await security.verifySha256(
+    candidate.zipPath,
+    expectedHash
+  );
+
+  if (!ok) {
+    throw new Error("SHA256-Hash-Prüfung fehlgeschlagen!");
+  }
+}
+
+
+
+  log("info", "ZIP-Integrität erfolgreich verifiziert.");
+
+  throw new Error(
+    "ZIP-Updates sind aktuell absichtlich deaktiviert – Security-Test erfolgreich."
+  );
+}
 
       const durationMs = Date.now() - startedAt.getTime();
 
