@@ -507,10 +507,11 @@ async function checkOnce() {
 
     const backupDir = createBackup();
 
-    try {
-      if (candidate.artifactType === "docker-image") {
-        await applyDockerUpdate(candidate, candidate.version);
-      }  else if (candidate.artifactType === "zip") {
+   try {
+  if (candidate.artifactType === "docker-image") {
+    await applyDockerUpdate(candidate, candidate.version);
+  } 
+  else if (candidate.artifactType === "zip") {
 
   log("info", "Prüfe ZIP-Integrität (Hash)...", {
     zipPath: candidate.zipPath,
@@ -518,33 +519,63 @@ async function checkOnce() {
 
   // --- SECURITY: HASH-PRÜFUNG ---
   if (config.security && config.security.requireHash) {
-  if (!candidate.hashFile || !fs.existsSync(candidate.hashFile)) {
-    throw new Error("Hash-Datei fehlt für ZIP-Update.");
+    const hashOk = await security.verifyZipHash(
+      candidate.zipPath,
+      candidate.hashFile
+    );
+
+    if (!hashOk) {
+      throw new Error("ZIP-Hash stimmt nicht überein – Update abgebrochen.");
+    }
   }
-
-  const expectedHash = fs
-    .readFileSync(candidate.hashFile, "utf8")
-    .split(" ")[0]
-    .trim();
-
-  const ok = await security.verifySha256(
-    candidate.zipPath,
-    expectedHash
-  );
-
-  if (!ok) {
-    throw new Error("SHA256-Hash-Prüfung fehlgeschlagen!");
-  }
-}
-
-
 
   log("info", "ZIP-Integrität erfolgreich verifiziert.");
 
-  throw new Error(
-    "ZIP-Updates sind aktuell absichtlich deaktiviert – Security-Test erfolgreich."
+  // -----------------------------
+  // ZIP INSTALLATION (ATOMIC SWAP)
+  // -----------------------------
+
+  const stagingDir = path.join(
+    config.paths.stagingDir || path.join(installRoot, "staging"),
+    `update-${Date.now()}`
   );
+
+  fs.mkdirSync(stagingDir, { recursive: true });
+
+  log("info", "Entpacke ZIP in Staging-Verzeichnis", { stagingDir });
+
+  const zip = new AdmZip(candidate.zipPath);
+  zip.extractAllTo(stagingDir, true);
+
+  const newDeploy = path.join(stagingDir, "deploy");
+  const deployTarget = path.join(installRoot, "deploy");
+
+  if (!fs.existsSync(newDeploy)) {
+    throw new Error("ZIP enthält kein deploy-Verzeichnis.");
+  }
+
+  log("info", "Atomic Swap: deploy-Verzeichnis wird ersetzt");
+
+  fs.rmSync(deployTarget, { recursive: true, force: true });
+  fs.renameSync(newDeploy, deployTarget);
+
+  // Version setzen
+  target.writeEnvVersion(config, candidate.version);
+
+  // Neustart
+  await target.restartDashboard(config);
+
+  // Healthcheck
+  const ok = await target.checkHealth(config, 45, 2000);
+  if (!ok) {
+    throw new Error("Healthcheck nach ZIP-Update fehlgeschlagen.");
+  }
+
+  log("info", "ZIP-Update erfolgreich installiert", {
+    version: candidate.version,
+  });
 }
+
 
       const durationMs = Date.now() - startedAt.getTime();
 

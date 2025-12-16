@@ -55,9 +55,30 @@ async function verifySignature(filePath, signatureFile, publicKeyFile) {
     });
   });
 }
+async function verifyZipHash(zipPath, hashFile) {
+  if (!fs.existsSync(hashFile)) {
+    throw new Error("Hash-Datei fehlt: " + hashFile);
+  }
+
+  const expected = fs
+    .readFileSync(hashFile, "utf8")
+    .trim()
+    .split(/\s+/)[0];
+
+  const actual = await sha256(zipPath);
+
+  if (actual.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error("ZIP-Hash stimmt nicht überein");
+  }
+
+  return true;
+}
+
 
 module.exports = {
   sha256,
   verifySha256,
-  verifySignature
+  verifySignature,
+  verifyZipHash
 };
+
