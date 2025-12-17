@@ -340,6 +340,10 @@ async function applyZipUpdate(candidate) {
 // MAIN LOOP
 // ------------------------------------------------------------
 async function checkOnce() {
+  log("info", "=== Update-Check gestartet ===", {
+    startedAt: new Date().toISOString()
+  });
+
   let currentVersion =
     target.readDockerImageVersion(config) ||
     target.readEnvVersion(config);
@@ -349,10 +353,12 @@ async function checkOnce() {
       lastResult: "no-current-version",
       info: "Weder Docker-Image noch .env enthalten eine Version"
     });
+
+    log("warn", "Keine aktuell installierte Version gefunden");
     return;
   }
 
-  // .env synchron halten
+  // .env immer mit Docker synchron halten
   target.writeEnvVersion(config, currentVersion);
 
   log("info", "Aktuell installierte Version ermittelt.", {
@@ -360,9 +366,18 @@ async function checkOnce() {
   });
 
   const candidate = await resolveLatestCandidate(currentVersion);
-  if (!candidate) return;
+  if (!candidate) {
+    log("info", "Kein neues Update verfügbar");
+    return;
+  }
 
-  if (compareSemver(candidate.version, currentVersion) <= 0) return;
+  if (compareSemver(candidate.version, currentVersion) <= 0) {
+    log("info", "Gefundene Version ist nicht neuer als die installierte.", {
+      currentVersion,
+      candidateVersion: candidate.version
+    });
+    return;
+  }
 
   log("info", "Neues Update wird vorbereitet.", {
     currentVersion,
@@ -376,23 +391,36 @@ async function checkOnce() {
   try {
     await applyZipUpdate(candidate);
     cleanupBackups();
+
     writeStatus({
       currentVersion: candidate.version,
       latestVersion: candidate.version,
       lastResult: "success",
       lastSource: candidate.source
     });
+
+    log("info", "Update erfolgreich abgeschlossen.", {
+      newVersion: candidate.version
+    });
   } catch (e) {
     restoreBackup(backup);
     await target.restartDashboard(config);
+
     writeStatus({
       currentVersion,
       latestVersion: candidate.version,
       lastResult: "rollback",
       lastError: e.message
     });
+
+    log("error", "Update fehlgeschlagen – Rollback durchgeführt", {
+      error: e.message
+    });
+  } finally {
+    log("info", "=== Update-Check beendet ===");
   }
 }
+
 
 
 
