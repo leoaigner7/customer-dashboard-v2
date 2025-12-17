@@ -1,10 +1,32 @@
 const fs = require("fs");
+const path = require("path");
 const crypto = require("crypto");
+
+const PUBLIC_KEY_PATH = path.join(__dirname, "trust", "updater-public.pem");
+
+/**
+ * Erzwingt eine gültige Ed25519-Signatur.
+ * Wirft Error, wenn:
+ * - Signatur fehlt
+ * - Signatur ungültig ist
+ */
+function verifySignatureOrThrow(filePath, sigPath) {
+  if (!fs.existsSync(sigPath)) {
+    throw new Error("Signaturdatei fehlt: " + sigPath);
+  }
+
+  const publicKey = fs.readFileSync(PUBLIC_KEY_PATH);
+  const data = fs.readFileSync(filePath);
+  const sig = fs.readFileSync(sigPath);
+
+  const ok = crypto.verify(null, data, publicKey, sig); // Ed25519
+  if (!ok) {
+    throw new Error("Signatur ungültig – Update wird abgelehnt");
+  }
+}
 
 /**
  * Berechnet SHA256-Hash einer Datei.
- * @param {string} filePath
- * @returns {Promise<string>} hex-Hash
  */
 function sha256(filePath) {
   return new Promise((resolve, reject) => {
@@ -18,43 +40,8 @@ function sha256(filePath) {
 }
 
 /**
- * Prüft, ob der SHA256-Hash einer Datei dem erwarteten Hash entspricht.
- * @param {string} filePath
- * @param {string} expectedHash
- * @returns {Promise<boolean>}
+ * Prüft ZIP gegen eine Hash-Datei.
  */
-async function verifySha256(filePath, expectedHash) {
-  const actual = await sha256(filePath);
-  return actual.toLowerCase() === expectedHash.toLowerCase();
-}
-
-/**
- * Prüft eine RSA-Signatur für eine Datei.
- * @param {string} filePath
- * @param {string} signatureFile
- * @param {string} publicKeyFile
- * @returns {Promise<boolean>}
- */
-async function verifySignature(filePath, signatureFile, publicKeyFile) {
-  const publicKey = fs.readFileSync(publicKeyFile, "utf8");
-  const signature = fs.readFileSync(signatureFile);
-
-  const verify = crypto.createVerify("RSA-SHA256");
-  const stream = fs.createReadStream(filePath);
-
-  return new Promise((resolve, reject) => {
-    stream.on("error", reject);
-    stream.on("data", (chunk) => verify.update(chunk));
-    stream.on("end", () => {
-      try {
-        const ok = verify.verify(publicKey, signature);
-        resolve(ok);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  });
-}
 async function verifyZipHash(zipPath, hashFile) {
   if (!fs.existsSync(hashFile)) {
     throw new Error("Hash-Datei fehlt: " + hashFile);
@@ -70,15 +57,10 @@ async function verifyZipHash(zipPath, hashFile) {
   if (actual.toLowerCase() !== expected.toLowerCase()) {
     throw new Error("ZIP-Hash stimmt nicht überein");
   }
-
-  return true;
 }
 
-
 module.exports = {
-  sha256,
-  verifySha256,
-  verifySignature,
-  verifyZipHash
+  verifySignatureOrThrow,
+  verifyZipHash,
+  sha256
 };
-

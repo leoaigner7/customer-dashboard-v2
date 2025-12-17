@@ -531,21 +531,39 @@ async function checkOnce() {
 
   log("info", "ZIP-Integrität erfolgreich verifiziert.");
 
-  // -----------------------------
-  // ZIP INSTALLATION (ATOMIC SWAP)
-  // -----------------------------
+log("info", "ZIP-Integrität erfolgreich verifiziert.");
 
-  const stagingDir = path.join(
-    config.paths.stagingDir || path.join(installRoot, "staging"),
-    `update-${Date.now()}`
-  );
+// 🔐 SECURITY: SIGNATURPRÜFUNG (PFLICHT)
+if (config.security && config.security.requireSignature) {
+  const sigPath =
+    candidate.signatureFile ||
+    candidate.zipPath.replace(/\.zip$/i, ".sig");
 
-  fs.mkdirSync(stagingDir, { recursive: true });
+  log("info", "Prüfe kryptografische Signatur des ZIPs", {
+    sigPath,
+  });
 
-  log("info", "Entpacke ZIP in Staging-Verzeichnis", { stagingDir });
+  security.verifySignatureOrThrow(candidate.zipPath, sigPath);
 
-  const zip = new AdmZip(candidate.zipPath);
-  zip.extractAllTo(stagingDir, true);
+  log("info", "Signaturprüfung erfolgreich.");
+}
+
+// -----------------------------
+// ZIP INSTALLATION (ATOMIC SWAP)
+// -----------------------------
+
+const stagingDir = path.join(
+  config.paths.stagingDir || path.join(installRoot, "staging"),
+  `update-${Date.now()}`
+);
+
+fs.mkdirSync(stagingDir, { recursive: true });
+
+log("info", "Entpacke ZIP in Staging-Verzeichnis", { stagingDir });
+
+const zip = new AdmZip(candidate.zipPath);
+zip.extractAllTo(stagingDir, true);
+
 
   const newDeploy = path.join(stagingDir, "deploy");
   const deployTarget = path.join(installRoot, "deploy");

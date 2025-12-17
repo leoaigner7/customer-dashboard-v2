@@ -28,3 +28,6 @@ deploy/.env
 # OS
 .DS_Store
 Thumbs.db
+
+#private
+trust/updater-private.pem

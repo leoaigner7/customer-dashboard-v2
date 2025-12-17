@@ -137,6 +137,27 @@ jobs:
       - name: Create SHA256 checksum
         run: |
           sha256sum customer-dashboard-v2-$VERSION.zip > customer-dashboard-v2-$VERSION.zip.sha256
+      # ===========================
+      # WRITE PRIVATE KEY (CI ONLY)
+      # ===========================
+      - name: Write updater private key
+        run: |
+          echo "${{ secrets.UPDATER_PRIVATE_KEY }}" > updater-private.pem
+      # ===========================
+      # SIGN CUSTOMER ZIP (Ed25519)
+      # ===========================
+      - name: Sign customer ZIP
+        run: |
+          node -e "
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const zip = 'customer-dashboard-v2-${VERSION}.zip';
+          const priv = fs.readFileSync('updater-private.pem');
+          const data = fs.readFileSync(zip);
+          const sig = crypto.sign(null, data, priv);
+          fs.writeFileSync(zip + '.sig', sig);
+          console.log('ZIP signed:', zip + '.sig');
+          "
 
       # ===========================
       # GITHUB RELEASE
@@ -148,3 +169,4 @@ jobs:
           files: |
             customer-dashboard-v2-${{ env.VERSION }}.zip
             customer-dashboard-v2-${{ env.VERSION }}.zip.sha256
+            customer-dashboard-v2-${{ env.VERSION }}.zip.sig

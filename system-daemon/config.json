@@ -54,7 +54,7 @@
 
   "security": {
     "requireHash": true,
-    "requireSignature": false,
+    "requireSignature": true,
     "publicKeyFile": "C:\\CustomerDashboard\\keys\\public.pem"
   },
 
