@@ -3,16 +3,17 @@
   "checkIntervalMs": 300000,
 
   "paths": {
-    "installRoot": "C:\\CustomerDashboard",
-    "stagingDir": "C:\\CustomerDashboard\\staging",
-    "backupDir": "C:\\CustomerDashboard\\backup",
-    "statusFile": "C:\\CustomerDashboard\\logs\\update-status.json"
-  },
+  "installRoot": "",
+  "stagingDir": "staging",
+  "backupDir": "backup",
+  "statusFile": "logs/update-status.json"
+},
 
-  "logging": {
-    "logFile": "C:\\CustomerDashboard\\logs\\daemon.log",
-    "level": "info"
-  },
+
+ "logging": {
+  "logFile": "logs/daemon.log",
+  "level": "info"
+},
 
   "backup": {
     "enabled": true,
@@ -21,11 +22,11 @@
 
   "target": {
     "type": "docker-dashboard",
-    "envFile": "C:\\CustomerDashboard\\deploy\\.env",
+    "envFile": "deploy/.env",
     "versionKey": "APP_VERSION",
-    "composeFile": "C:\\CustomerDashboard\\deploy\\docker-compose.yml",
+    "composeFile": "deploy/docker-compose.yml",
     "serviceName": "dashboard",
-    "healthUrl": "http://localhost:8080"
+    "healthUrl": "http://localhost:8080/"
   },
 
   "sources": {
@@ -40,30 +41,26 @@
     },
     "offlineZip": {
       "enabled": true,
-      "zipPath": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip",
-      "hashFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sha256",
-      "signatureFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sig",
-      "version": null
-    },
-    "networkShare": {
-      "enabled": false,
-      "root": "\\\\fileserver\\releases\\customer-dashboard-v2",
-      "latestFile": "latest.txt"
+       "zipPath": "offline/customer-dashboard-v2-latest.zip",
+       "hashFile": "offline/customer-dashboard-v2-latest.zip.sha256",
+       "signatureFile": "offline/customer-dashboard-v2-latest.zip.sig",
+       "version": null
     }
   },
 
   "security": {
     "requireHash": true,
     "requireSignature": false,
-    "publicKeyFile": "C:\\CustomerDashboard\\keys\\public.pem"
+    "publicKeyFile": "keys/public.pem"
   },
 
   "selfUpdate": {
+    
     "enabled": false,
     "zipUrl": "",
     "hashUrl": "",
     "signatureUrl": "",
-    "localZipPath": "C:\\CustomerDashboard\\system-daemon\\daemon-update.zip"
+    "localZipPath": "system-daemon/daemon-update.zip"
   },
 
   "policy": {

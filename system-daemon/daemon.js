@@ -32,11 +32,79 @@ if (!fs.existsSync(CONFIG_PATH)) {
 }
 
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+// ------------------------------------------------------------
+// PLATTFORMUNABHÄNGIGE PFAD-NORMALISIERUNG
+// ------------------------------------------------------------
+function resolveInstallRoot() {
+  if (process.env.CD_INSTALL_ROOT) return process.env.CD_INSTALL_ROOT;
+  if (config.paths?.installRoot) return config.paths.installRoot;
+  return process.platform === "win32"
+    ? "C:\\CustomerDashboard"
+    : "/opt/customer-dashboard";
+}
+
+const INSTALL_ROOT = resolveInstallRoot();
+
+function resolvePath(p) {
+  if (!p) return null;
+  if (path.isAbsolute(p)) return p;
+  return path.join(INSTALL_ROOT, p);
+}
+
+// Pfade überschreiben / normalisieren
+config.paths = {
+  installRoot: INSTALL_ROOT,
+  stagingDir: resolvePath(config.paths?.stagingDir || "staging"),
+  backupDir: resolvePath(config.paths?.backupDir || "backup"),
+  statusFile:
+    process.env.CD_STATUS_FILE ||
+    resolvePath(config.paths?.statusFile || "logs/update-status.json")
+};
+
+// Logging-Pfad fixen
+if (config.logging?.logFile) {
+  config.logging.logFile = resolvePath(config.logging.logFile);
+}
+
+// Target-Pfade fixen
+if (config.target) {
+  config.target.envFile = resolvePath(config.target.envFile || "deploy/.env");
+  config.target.composeFile = resolvePath(
+    config.target.composeFile || "deploy/docker-compose.yml"
+  );
+}
+
+// Offline-ZIP Pfade fixen
+if (config.sources?.offlineZip) {
+  const o = config.sources.offlineZip;
+  o.zipPath = resolvePath(o.zipPath);
+  o.hashFile = resolvePath(o.hashFile);
+  o.signatureFile = resolvePath(o.signatureFile);
+}
+
+// Self-Update Pfad fixen
+if (config.selfUpdate?.localZipPath) {
+  config.selfUpdate.localZipPath = resolvePath(
+    config.selfUpdate.localZipPath
+  );
+}
 
 const installRoot = config.paths.installRoot;
 const backupRoot = config.paths.backupDir;
 const statusFile = config.paths.statusFile;
 const intervalMs = config.checkIntervalMs || 300000;
+// ------------------------------------------------------------
+// VERZEICHNISSE BEIM START SICHERSTELLEN
+// ------------------------------------------------------------
+[
+  config.paths.installRoot,
+  config.paths.stagingDir,
+  config.paths.backupDir,
+  path.dirname(config.paths.statusFile),
+  path.dirname(config.logging?.logFile || "")
+].forEach(dir => {
+  if (dir) fs.mkdirSync(dir, { recursive: true });
+});
 
 // ------------------------------------------------------------
 // LOGGING
@@ -86,6 +154,7 @@ async function getGithubCandidate() {
   if (!src?.enabled) return null;
 
   const res = await axios.get(src.apiUrl, {
+      timeout: 10000,
     headers: { "User-Agent": "customer-dashboard-daemon" }
   });
 
@@ -101,8 +170,14 @@ async function getGithubCandidate() {
     return null;
   }
 
-  const zipAsset = res.data.assets.find(a => a.name.endsWith(".zip"));
-  const hashAsset = res.data.assets.find(a => a.name.endsWith(".sha256"));
+const zipAsset = res.data.assets.find(
+  a => a.name.startsWith(src.assetPrefix) && a.name.endsWith(src.assetExt)
+);
+
+const hashAsset = res.data.assets.find(
+  a => a.name.startsWith(src.assetPrefix) && a.name.endsWith(src.hashExt)
+);
+
 
   if (!zipAsset || !hashAsset) return null;
 
@@ -162,16 +237,37 @@ function createBackup() {
   const src = path.join(installRoot, "deploy");
   const dest = path.join(dir, "deploy");
 
+  if (fs.existsSync(src)) {
   fs.cpSync(src, dest, { recursive: true });
-  return dir;
 }
 
-function restoreBackup(dir) {
-  fs.rmSync(path.join(installRoot, "deploy"), { recursive: true, force: true });
-  fs.cpSync(path.join(dir, "deploy"), path.join(installRoot, "deploy"), {
-    recursive: true
-  });
+
+
+  return dir;
 }
+function cleanupBackups() {
+  const entries = fs.readdirSync(backupRoot).sort();
+  const keep = config.backup?.keep || 5;
+  while (entries.length > keep) {
+    const dir = entries.shift();
+    fs.rmSync(path.join(backupRoot, dir), { recursive: true, force: true });
+  }
+}
+
+
+function restoreBackup(dir) {
+  const src = path.join(dir, "deploy");
+  const dest = path.join(installRoot, "deploy");
+
+  if (!fs.existsSync(src)) {
+    log("error", "Rollback fehlgeschlagen – Backup unvollständig");
+    return;
+  }
+
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.cpSync(src, dest, { recursive: true });
+}
+
 
 // ------------------------------------------------------------
 // UPDATE APPLY (ZIP)
@@ -185,13 +281,23 @@ async function applyZipUpdate(candidate) {
     const zipPath = path.join(staging, `github-${candidate.version}.zip`);
     const hashPath = zipPath + ".sha256";
 
-    const zipRes = await axios.get(candidate.zipUrl, { responseType: "stream" });
+   const zipRes = await axios.get(candidate.zipUrl, {
+  responseType: "stream",
+  timeout: 30000
+});
+
     await new Promise((r, e) =>
       zipRes.data.pipe(fs.createWriteStream(zipPath)).on("finish", r).on("error", e)
     );
 
-    const hashRes = await axios.get(candidate.hashUrl);
+    let hashRes;
+    try {
+      hashRes = await axios.get(candidate.hashUrl, { timeout: 10000 });
+    } catch (e) {
+      throw new Error("Hash-Datei konnte nicht geladen werden");
+    }
     fs.writeFileSync(hashPath, hashRes.data, "utf8");
+
 
     candidate.zipPath = zipPath;
     candidate.hashFile = hashPath;
@@ -235,6 +341,13 @@ async function applyZipUpdate(candidate) {
 // ------------------------------------------------------------
 async function checkOnce() {
   const currentVersion = target.readEnvVersion(config);
+  if (!currentVersion) {
+  writeStatus({
+    lastResult: "no-current-version",
+    info: "Keine aktuell installierte Version gefunden"
+  });
+  return;
+}
 
   const candidate = await resolveLatestCandidate(currentVersion);
   if (!candidate) return;
@@ -245,6 +358,7 @@ async function checkOnce() {
 
   try {
     await applyZipUpdate(candidate);
+    cleanupBackups();
     writeStatus({
       currentVersion: candidate.version,
       latestVersion: candidate.version,
