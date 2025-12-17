@@ -382,8 +382,12 @@ async function checkOnce() {
 // ------------------------------------------------------------
 async function main() {
   log("info", "Auto-Update-Daemon gestartet");
-  await checkAndApplySelfUpdate(config, log, security);
 
+  // --- Initiale Versions-Synchronisierung ---
+
+   
+
+  await checkAndApplySelfUpdate(config, log, security);
   await sleep(60000);
 
   while (true) {
@@ -391,7 +395,6 @@ async function main() {
     await sleep(intervalMs);
   }
 }
-
 main().catch(err => {
   log("error", "Daemon-Absturz", { error: err.message });
   process.exit(1);

@@ -15,21 +15,24 @@ const { spawn } = require("child_process");
  *  - extra: optionale Zusatzinfos (z.B. Version, Dauer, Fehlertext)
  */
 function log(level, message, config, extra = undefined) {
-  const logFile =
-    (config &&
-      config.logging &&
-      config.logging.logFile) ||
-    (config &&
-      config.notification &&
-      config.notification.logFile) ||
-    "C:\\CustomerDashboard\\logs\\daemon.log";
+const entry = {
+  ts: new Date().toISOString(),
+  level,
+  msg: message,
+  extra,
+};
 
-  const entry = {
-    ts: new Date().toISOString(),
-    level,
-    msg: message,
-    extra,
-  };
+const logFile =
+  (config && config.logging && config.logging.logFile) || null;
+
+if (!logFile) {
+  console.log(
+    `[${entry.ts}] [${level}] ${message}`,
+    extra ? JSON.stringify(extra) : ""
+  );
+  return;
+}
+
 
   const line = JSON.stringify(entry) + "\n";
 
@@ -101,10 +104,11 @@ function runCommand(command, args, options = {}, config) {
     const started = Date.now();
     log("info", `Prozess gestartet: ${command} ${args.join(" ")}`, config);
 
-    const child = spawn(command, args, {
-      shell: false,
-      ...options,
-    });
+  const child = spawn(command, args, {
+  shell: process.platform === "win32",
+  ...options
+});
+
 
     let output = "";
     let errorOutput = "";
@@ -150,27 +154,7 @@ function runCommand(command, args, options = {}, config) {
   });
 }
 
-/**
- * Lädt ein Docker-Image (docker pull).
- */
-async function downloadImage(config, version) {
-  const template = config.sources.github.imageTemplate;
-  const image = template.replace("{version}", version);
 
-  log("info", "Starte Download des Docker-Images", config, {
-    image,
-    version,
-  });
-
-  await runCommand("docker", ["pull", image], {}, config);
-
-  log("info", "Docker-Image erfolgreich geladen", config, {
-    image,
-    version,
-  });
-
-  return image;
-}
 
 /**
  * Startet das Dashboard via docker compose neu:
@@ -302,8 +286,8 @@ module.exports = {
   log,
   readEnvVersion,
   writeEnvVersion,
-  downloadImage,
   restartDashboard,
   checkHealth,
-  runCommand, // optional, falls du es später im Daemon nutzen möchtest
+  runCommand
 };
+
