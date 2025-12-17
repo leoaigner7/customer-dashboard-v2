@@ -340,19 +340,36 @@ async function applyZipUpdate(candidate) {
 // MAIN LOOP
 // ------------------------------------------------------------
 async function checkOnce() {
-  const currentVersion = target.readEnvVersion(config);
+  let currentVersion =
+    target.readDockerImageVersion(config) ||
+    target.readEnvVersion(config);
+
   if (!currentVersion) {
-  writeStatus({
-    lastResult: "no-current-version",
-    info: "Keine aktuell installierte Version gefunden"
+    writeStatus({
+      lastResult: "no-current-version",
+      info: "Weder Docker-Image noch .env enthalten eine Version"
+    });
+    return;
+  }
+
+  // .env synchron halten
+  target.writeEnvVersion(config, currentVersion);
+
+  log("info", "Aktuell installierte Version ermittelt.", {
+    currentVersion
   });
-  return;
-}
 
   const candidate = await resolveLatestCandidate(currentVersion);
   if (!candidate) return;
 
   if (compareSemver(candidate.version, currentVersion) <= 0) return;
+
+  log("info", "Neues Update wird vorbereitet.", {
+    currentVersion,
+    newVersion: candidate.version,
+    source: candidate.source,
+    type: "docker-image"
+  });
 
   const backup = createBackup();
 
@@ -377,15 +394,58 @@ async function checkOnce() {
   }
 }
 
+
+
+  const candidate = await resolveLatestCandidate(currentVersion);
+  if (!candidate) return;
+
+  if (compareSemver(candidate.version, currentVersion) <= 0) return;
+log("info", "Neues Update wird vorbereitet.", {
+  currentVersion,
+  newVersion: candidate.version,
+  source: candidate.source,
+  type: "docker-image"
+});
+
+  const backup = createBackup();
+
+  try {
+    await applyZipUpdate(candidate);
+    cleanupBackups();
+    writeStatus({
+      currentVersion: candidate.version,
+      latestVersion: candidate.version,
+      lastResult: "success",
+      lastSource: candidate.source
+    });
+  } catch (e) {
+    restoreBackup(backup);
+    await target.restartDashboard(config);
+    writeStatus({
+      currentVersion,
+      latestVersion: candidate.version,
+      lastResult: "rollback",
+      lastError: e.message
+    });
+  }
+
+
 // ------------------------------------------------------------
 // START
 // ------------------------------------------------------------
 async function main() {
   log("info", "Auto-Update-Daemon gestartet");
 
-  // --- Initiale Versions-Synchronisierung ---
+  const initialVersion =
+    target.readDockerImageVersion(config) ||
+    target.readEnvVersion(config);
 
-   
+  if (initialVersion) {
+    target.writeEnvVersion(config, initialVersion);
+    log("info", "Initiale Versions-Synchronisierung durchgeführt", {
+      version: initialVersion
+    });
+  }
 
   await checkAndApplySelfUpdate(config, log, security);
   await sleep(60000);

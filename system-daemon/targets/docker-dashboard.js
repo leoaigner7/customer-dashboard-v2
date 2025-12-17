@@ -194,6 +194,26 @@ async function restartDashboard(config) {
     composeFile,
   });
 }
+const { execSync } = require("child_process");
+function readDockerImageVersion(config) {
+  try {
+    const service = config.target.serviceName;
+
+    const out = execSync(
+      `docker ps --filter "name=${service}" --format "{{.Image}}"`,
+      { encoding: "utf8" }
+    ).trim();
+
+    if (!out) return null;
+
+    // ghcr.io/...:7.0.0 → 7.0.0
+    const parts = out.split(":");
+    return parts.length > 1 ? parts.pop() : null;
+  } catch {
+    return null;
+  }
+}
+
 
 /**
  * Healthcheck: /api/health des Dashboards.
@@ -286,6 +306,7 @@ module.exports = {
   log,
   readEnvVersion,
   writeEnvVersion,
+  readDockerImageVersion,
   restartDashboard,
   checkHealth,
   runCommand
