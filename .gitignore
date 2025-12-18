@@ -29,5 +29,6 @@ deploy/.env
 .DS_Store
 Thumbs.db
 
-#private
-trust/updater-private.pem
+# NEVER COMMIT PRIVATE KEYS
+*private*.pem
+*.key
