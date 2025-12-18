@@ -47,10 +47,12 @@ async function verifyZipHash(zipPath, hashFile) {
     throw new Error("Hash-Datei fehlt: " + hashFile);
   }
 
-  const expected = fs
-    .readFileSync(hashFile, "utf8")
-    .trim()
-    .split(/\s+/)[0];
+ const expected = fs
+  .readFileSync(hashFile, "utf8")
+  .replace(/^\uFEFF/, "") // <-- BOM entfernen
+  .trim()
+  .split(/\s+/)[0];
+
 
   const actual = await sha256(zipPath);
 
