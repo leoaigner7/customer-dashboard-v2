@@ -512,58 +512,65 @@ async function checkOnce() {
     await applyDockerUpdate(candidate, candidate.version);
   } 
   else if (candidate.artifactType === "zip") {
+  // -----------------------------
+  // STAGING DIR (immer zuerst)
+  // -----------------------------
+  const stagingDir = path.join(
+    config.paths.stagingDir || path.join(installRoot, "staging"),
+    `update-${Date.now()}`
+  );
+  fs.mkdirSync(stagingDir, { recursive: true });
 
-  log("info", "Prüfe ZIP-Integrität (Hash)...", {
-    zipPath: candidate.zipPath,
+  // stabile Kopien (Windows-safe)
+  const stableZip = path.join(stagingDir, "package.zip");
+  const stableHash = path.join(stagingDir, "package.zip.sha256");
+  const stableSig = path.join(stagingDir, "package.zip.sig");
+
+  log("info", "Kopiere Update-Artefakte in Staging (stabile Kopie)", {
+    stagingDir,
+    srcZip: candidate.zipPath,
   });
 
-  // --- SECURITY: HASH-PRÜFUNG ---
-  if (config.security && config.security.requireHash) {
-    const hashOk = await security.verifyZipHash(
-      candidate.zipPath,
-      candidate.hashFile
-    );
+  fs.copyFileSync(candidate.zipPath, stableZip);
 
-    if (!hashOk) {
-      throw new Error("ZIP-Hash stimmt nicht überein – Update abgebrochen.");
-    }
+  if (candidate.hashFile) {
+    fs.copyFileSync(candidate.hashFile, stableHash);
+  }
+  if (candidate.signatureFile) {
+    fs.copyFileSync(candidate.signatureFile, stableSig);
   }
 
-  log("info", "ZIP-Integrität erfolgreich verifiziert.");
+  // -----------------------------
+  // SECURITY: HASH
+  // -----------------------------
+  if (config.security?.requireHash) {
+    log("info", "Prüfe ZIP-Integrität (Hash)...", { zipPath: stableZip });
 
-log("info", "ZIP-Integrität erfolgreich verifiziert.");
+    // throws on mismatch
+    await security.verifyZipHash(stableZip, stableHash);
 
-// 🔐 SECURITY: SIGNATURPRÜFUNG (PFLICHT)
-if (config.security && config.security.requireSignature) {
-  const sigPath =
-    candidate.signatureFile ||
-    candidate.zipPath.replace(/\.zip$/i, ".sig");
+    log("info", "ZIP-Integrität erfolgreich verifiziert.");
+  }
 
-  log("info", "Prüfe kryptografische Signatur des ZIPs", {
-    sigPath,
-  });
+  // -----------------------------
+  // SECURITY: SIGNATURE
+  // -----------------------------
+  if (config.security?.requireSignature) {
+    log("info", "Prüfe kryptografische Signatur des ZIPs", { sigPath: stableSig });
 
-  security.verifySignatureOrThrow(candidate.zipPath, sigPath);
+    // throws on invalid/missing
+    security.verifySignatureOrThrow(stableZip, stableSig);
 
-  log("info", "Signaturprüfung erfolgreich.");
-}
+    log("info", "Signaturprüfung erfolgreich.");
+  }
 
-// -----------------------------
-// ZIP INSTALLATION (ATOMIC SWAP)
-// -----------------------------
+  // -----------------------------
+  // ZIP INSTALLATION (ATOMIC SWAP)
+  // -----------------------------
+  log("info", "Entpacke ZIP in Staging-Verzeichnis", { stagingDir });
 
-const stagingDir = path.join(
-  config.paths.stagingDir || path.join(installRoot, "staging"),
-  `update-${Date.now()}`
-);
-
-fs.mkdirSync(stagingDir, { recursive: true });
-
-log("info", "Entpacke ZIP in Staging-Verzeichnis", { stagingDir });
-
-const zip = new AdmZip(candidate.zipPath);
-zip.extractAllTo(stagingDir, true);
-
+  const zip = new AdmZip(stableZip);
+  zip.extractAllTo(stagingDir, true);
 
   const newDeploy = path.join(stagingDir, "deploy");
   const deployTarget = path.join(installRoot, "deploy");
@@ -593,7 +600,6 @@ zip.extractAllTo(stagingDir, true);
     version: candidate.version,
   });
 }
-
 
       const durationMs = Date.now() - startedAt.getTime();
 
