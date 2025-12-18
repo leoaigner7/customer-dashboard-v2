@@ -47,6 +47,30 @@ New-Item -ItemType Directory -Force -Path $LogDir     | Out-Null
 Write-Host "Kopiere Dateien..."
 Copy-Item -Recurse -Force "..\deploy\*"        $DeployDir
 Copy-Item -Recurse -Force "..\system-daemon\*" $DaemonDir
+# -------------------------------------------------------------
+# 3.1 INSTALL TRUSTED PUBLIC KEY (SIGNATURE VERIFICATION)
+# -------------------------------------------------------------
+Write-Host "Installiere Update-Signatur (Public Key)..."
+
+$TrustDir = "$DaemonDir\trust"
+$SourcePublicKey = "..\system-daemon\trust\updater-public.pem"
+$TargetPublicKey = "$TrustDir\updater-public.pem"
+
+New-Item -ItemType Directory -Force -Path $TrustDir | Out-Null
+
+if (-not (Test-Path $SourcePublicKey)) {
+    Write-Error "Public Key fehlt im Paket: $SourcePublicKey"
+    exit 1
+}
+
+Copy-Item -Force $SourcePublicKey $TargetPublicKey
+
+if (-not (Test-Path $TargetPublicKey)) {
+    Write-Error "Public Key konnte nicht installiert werden."
+    exit 1
+}
+
+Write-Host "Public Key erfolgreich installiert."
 
 # -------------------------------------------------------------
 # 4. DOCKER

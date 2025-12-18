@@ -55,7 +55,7 @@
   "security": {
     "requireHash": true,
     "requireSignature": true,
-    "publicKeyFile": "C:\\CustomerDashboard\\keys\\public.pem"
+     "publicKeyFile": "C:\\CustomerDashboard\\system-daemon\\trust\\updater-public.pem"
   },
 
   "selfUpdate": {
