@@ -188,6 +188,27 @@ jobs:
       - name: Create SHA256 checksum
         run: |
           sha256sum customer-dashboard-v2-$VERSION.zip > customer-dashboard-v2-$VERSION.zip.sha256
+      # ===========================
+      # WRITE PRIVATE KEY (CI ONLY)
+      # ===========================
+      - name: Write updater private key
+        run: |
+          echo "${{ secrets.UPDATER_PRIVATE_KEY }}" > updater-private.pem
+      # ===========================
+      # SIGN CUSTOMER ZIP (Ed25519)
+      # ===========================
+      - name: Sign customer ZIP
+        run: |
+          node -e "
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const zip = 'customer-dashboard-v2-${VERSION}.zip';
+          const priv = fs.readFileSync('updater-private.pem');
+          const data = fs.readFileSync(zip);
+          const sig = crypto.sign(null, data, priv);
+          fs.writeFileSync(zip + '.sig', sig);
+          console.log('ZIP signed:', zip + '.sig');
+          "
 
       # ===========================
       # GITHUB RELEASE
@@ -199,6 +220,7 @@ jobs:
           files: |
             customer-dashboard-v2-${{ env.VERSION }}.zip
             customer-dashboard-v2-${{ env.VERSION }}.zip.sha256
+            customer-dashboard-v2-${{ env.VERSION }}.zip.sig
 
 ===== Datei: app\backend\auth.js =====
 const jwt = require("jsonwebtoken");
@@ -855,6 +877,30 @@ New-Item -ItemType Directory -Force -Path $LogDir     | Out-Null
 Write-Host "Kopiere Dateien..."
 Copy-Item -Recurse -Force "..\deploy\*"        $DeployDir
 Copy-Item -Recurse -Force "..\system-daemon\*" $DaemonDir
+# -------------------------------------------------------------
+# 3.1 INSTALL TRUSTED PUBLIC KEY (SIGNATURE VERIFICATION)
+# -------------------------------------------------------------
+Write-Host "Installiere Update-Signatur (Public Key)..."
+
+$TrustDir = "$DaemonDir\trust"
+$SourcePublicKey = "..\system-daemon\trust\updater-public.pem"
+$TargetPublicKey = "$TrustDir\updater-public.pem"
+
+New-Item -ItemType Directory -Force -Path $TrustDir | Out-Null
+
+if (-not (Test-Path $SourcePublicKey)) {
+    Write-Error "Public Key fehlt im Paket: $SourcePublicKey"
+    exit 1
+}
+
+Copy-Item -Force $SourcePublicKey $TargetPublicKey
+
+if (-not (Test-Path $TargetPublicKey)) {
+    Write-Error "Public Key konnte nicht installiert werden."
+    exit 1
+}
+
+Write-Host "Public Key erfolgreich installiert."
 
 # -------------------------------------------------------------
 # 4. DOCKER
@@ -35656,8 +35702,8 @@ describe('getProxyForUrl', function() {
 
   "security": {
     "requireHash": true,
-    "requireSignature": false,
-    "publicKeyFile": "C:\\CustomerDashboard\\keys\\public.pem"
+    "requireSignature": true,
+     "publicKeyFile": "C:\\CustomerDashboard\\system-daemon\\trust\\updater-public.pem"
   },
 
   "selfUpdate": {
@@ -36189,39 +36235,64 @@ async function checkOnce() {
     await applyDockerUpdate(candidate, candidate.version);
   } 
   else if (candidate.artifactType === "zip") {
-
-  log("info", "Prüfe ZIP-Integrität (Hash)...", {
-    zipPath: candidate.zipPath,
-  });
-
-  // --- SECURITY: HASH-PRÜFUNG ---
-  if (config.security && config.security.requireHash) {
-    const hashOk = await security.verifyZipHash(
-      candidate.zipPath,
-      candidate.hashFile
-    );
-
-    if (!hashOk) {
-      throw new Error("ZIP-Hash stimmt nicht überein – Update abgebrochen.");
-    }
-  }
-
-  log("info", "ZIP-Integrität erfolgreich verifiziert.");
-
   // -----------------------------
-  // ZIP INSTALLATION (ATOMIC SWAP)
+  // STAGING DIR (immer zuerst)
   // -----------------------------
-
   const stagingDir = path.join(
     config.paths.stagingDir || path.join(installRoot, "staging"),
     `update-${Date.now()}`
   );
-
   fs.mkdirSync(stagingDir, { recursive: true });
 
+  // stabile Kopien (Windows-safe)
+  const stableZip = path.join(stagingDir, "package.zip");
+  const stableHash = path.join(stagingDir, "package.zip.sha256");
+  const stableSig = path.join(stagingDir, "package.zip.sig");
+
+  log("info", "Kopiere Update-Artefakte in Staging (stabile Kopie)", {
+    stagingDir,
+    srcZip: candidate.zipPath,
+  });
+
+  fs.copyFileSync(candidate.zipPath, stableZip);
+
+  if (candidate.hashFile) {
+    fs.copyFileSync(candidate.hashFile, stableHash);
+  }
+  if (candidate.signatureFile) {
+    fs.copyFileSync(candidate.signatureFile, stableSig);
+  }
+
+  // -----------------------------
+  // SECURITY: HASH
+  // -----------------------------
+  if (config.security?.requireHash) {
+    log("info", "Prüfe ZIP-Integrität (Hash)...", { zipPath: stableZip });
+
+    // throws on mismatch
+    await security.verifyZipHash(stableZip, stableHash);
+
+    log("info", "ZIP-Integrität erfolgreich verifiziert.");
+  }
+
+  // -----------------------------
+  // SECURITY: SIGNATURE
+  // -----------------------------
+  if (config.security?.requireSignature) {
+    log("info", "Prüfe kryptografische Signatur des ZIPs", { sigPath: stableSig });
+
+    // throws on invalid/missing
+    security.verifySignatureOrThrow(stableZip, stableSig);
+
+    log("info", "Signaturprüfung erfolgreich.");
+  }
+
+  // -----------------------------
+  // ZIP INSTALLATION (ATOMIC SWAP)
+  // -----------------------------
   log("info", "Entpacke ZIP in Staging-Verzeichnis", { stagingDir });
 
-  const zip = new AdmZip(candidate.zipPath);
+  const zip = new AdmZip(stableZip);
   zip.extractAllTo(stagingDir, true);
 
   const newDeploy = path.join(stagingDir, "deploy");
@@ -36252,7 +36323,6 @@ async function checkOnce() {
     version: candidate.version,
   });
 }
-
 
       const durationMs = Date.now() - startedAt.getTime();
 
@@ -36373,12 +36443,34 @@ main().catch((err) => {
 
 ===== Datei: system-daemon\security.js =====
 const fs = require("fs");
+const path = require("path");
 const crypto = require("crypto");
+
+const PUBLIC_KEY_PATH = path.join(__dirname, "trust", "updater-public.pem");
+
+/**
+ * Erzwingt eine gültige Ed25519-Signatur.
+ * Wirft Error, wenn:
+ * - Signatur fehlt
+ * - Signatur ungültig ist
+ */
+function verifySignatureOrThrow(filePath, sigPath) {
+  if (!fs.existsSync(sigPath)) {
+    throw new Error("Signaturdatei fehlt: " + sigPath);
+  }
+
+  const publicKey = fs.readFileSync(PUBLIC_KEY_PATH);
+  const data = fs.readFileSync(filePath);
+  const sig = fs.readFileSync(sigPath);
+
+  const ok = crypto.verify(null, data, publicKey, sig); // Ed25519
+  if (!ok) {
+    throw new Error("Signatur ungültig – Update wird abgelehnt");
+  }
+}
 
 /**
  * Berechnet SHA256-Hash einer Datei.
- * @param {string} filePath
- * @returns {Promise<string>} hex-Hash
  */
 function sha256(filePath) {
   return new Promise((resolve, reject) => {
@@ -36392,70 +36484,32 @@ function sha256(filePath) {
 }
 
 /**
- * Prüft, ob der SHA256-Hash einer Datei dem erwarteten Hash entspricht.
- * @param {string} filePath
- * @param {string} expectedHash
- * @returns {Promise<boolean>}
+ * Prüft ZIP gegen eine Hash-Datei.
  */
-async function verifySha256(filePath, expectedHash) {
-  const actual = await sha256(filePath);
-  return actual.toLowerCase() === expectedHash.toLowerCase();
-}
-
-/**
- * Prüft eine RSA-Signatur für eine Datei.
- * @param {string} filePath
- * @param {string} signatureFile
- * @param {string} publicKeyFile
- * @returns {Promise<boolean>}
- */
-async function verifySignature(filePath, signatureFile, publicKeyFile) {
-  const publicKey = fs.readFileSync(publicKeyFile, "utf8");
-  const signature = fs.readFileSync(signatureFile);
-
-  const verify = crypto.createVerify("RSA-SHA256");
-  const stream = fs.createReadStream(filePath);
-
-  return new Promise((resolve, reject) => {
-    stream.on("error", reject);
-    stream.on("data", (chunk) => verify.update(chunk));
-    stream.on("end", () => {
-      try {
-        const ok = verify.verify(publicKey, signature);
-        resolve(ok);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  });
-}
 async function verifyZipHash(zipPath, hashFile) {
   if (!fs.existsSync(hashFile)) {
     throw new Error("Hash-Datei fehlt: " + hashFile);
   }
 
-  const expected = fs
-    .readFileSync(hashFile, "utf8")
-    .trim()
-    .split(/\s+/)[0];
+ const expected = fs
+  .readFileSync(hashFile, "utf8")
+  .replace(/^\uFEFF/, "") // <-- BOM entfernen
+  .trim()
+  .split(/\s+/)[0];
+
 
   const actual = await sha256(zipPath);
 
   if (actual.toLowerCase() !== expected.toLowerCase()) {
     throw new Error("ZIP-Hash stimmt nicht überein");
   }
-
-  return true;
 }
 
-
 module.exports = {
-  sha256,
-  verifySha256,
-  verifySignature,
-  verifyZipHash
+  verifySignatureOrThrow,
+  verifyZipHash,
+  sha256
 };
-
 
 ===== Datei: system-daemon\selfUpdate.js =====
 const fs = require("fs");

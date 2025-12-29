@@ -1,13 +1,16 @@
 [Unit]
-Description=Customer Dashboard Auto-Update Daemon
-After=network-online.target docker.service
+Description=Customer Dashboard Auto Updater
+After=network.target docker.service
+Requires=docker.service
 
 [Service]
-WorkingDirectory=/opt/customer-dashboard/system-daemon
-ExecStart=/usr/bin/node daemon.js
-Restart=always
-RestartSec=5
+Type=simple
 User=root
+WorkingDirectory=/opt/customer-dashboard/system-daemon
+ExecStart=/usr/bin/node /opt/customer-dashboard/system-daemon/daemon.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
 
 [Install]
 WantedBy=multi-user.target
