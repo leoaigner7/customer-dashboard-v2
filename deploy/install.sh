@@ -14,49 +14,68 @@ DEPLOY_DIR="$INSTALL_DIR/deploy"
 DAEMON_DIR="$INSTALL_DIR/system-daemon"
 LOG_DIR="$INSTALL_DIR/logs"
 
-SERVICE_NAME="customer-dashboard-updater"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+NODE_BIN="$(command -v node)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "Installationsverzeichnis:    $INSTALL_DIR"
-echo "Paketwurzelverzeichnis:      $PACKAGE_ROOT"
+echo "Installationsverzeichnis: $INSTALL_DIR"
+echo "Paketwurzelverzeichnis:   $PACKAGE_ROOT"
 echo
 
 # -------------------------------------------------------------
-# 1. Verzeichnisse anlegen
+# 1. Verzeichnisse
 # -------------------------------------------------------------
 sudo mkdir -p "$DEPLOY_DIR" "$DAEMON_DIR" "$LOG_DIR"
 
 # -------------------------------------------------------------
-# 2. Dateien KORREKT kopieren (inkl. .env!)
+# 2. Dateien kopieren
 # -------------------------------------------------------------
-echo "Kopiere deploy-Dateien..."
+echo "Kopiere Dateien..."
 sudo cp -a "$SCRIPT_DIR/." "$DEPLOY_DIR/"
+sudo cp -a "$PACKAGE_ROOT/system-daemon/." "$DAEMON_DIR/"
 
-echo "Kopiere system-daemon..."
-if [ ! -d "$PACKAGE_ROOT/system-daemon" ]; then
-  echo "FEHLER: system-daemon nicht gefunden!" >&2
+#---------------------------------
+# Public Key installieren
+
+#---------------------------------
+echo "Installiere Update-Signatur (Public Key)..."
+
+TRUST_DIR="$DAEMON_DIR/trust"
+SRC_KEY="$PACKAGE_ROOT/system-daemon/trust/updater-public.pem"
+DST_KEY="$TRUST_DIR/updater-public.pem"
+
+sudo mkdir -p "$TRUST_DIR"
+
+if [ ! -f "$SRC_KEY" ]; then
+  echo "FEHLER: Public Key fehlt im Paket" >&2
   exit 1
 fi
-sudo cp -a "$PACKAGE_ROOT/system-daemon/." "$DAEMON_DIR/"
+
+sudo cp "$SRC_KEY" "$DST_KEY"
+
+if [ ! -f "$DST_KEY" ]; then
+  echo "FEHLER: Public Key konnte nicht installiert werden" >&2
+  exit 1
+fi
+
+echo "Public Key erfolgreich installiert."
 
 # -------------------------------------------------------------
 # 3. Checks
 # -------------------------------------------------------------
-if ! command -v docker >/dev/null 2>&1; then
-  echo "FEHLER: Docker ist nicht installiert." >&2
+if ! command -v docker >/dev/null; then
+  echo "FEHLER: Docker nicht installiert" >&2
   exit 1
 fi
 
-if [ ! -f "$DEPLOY_DIR/$COMPOSE_FILE" ]; then
-  echo "FEHLER: docker-compose.yml fehlt." >&2
+if ! command -v node >/dev/null; then
+  echo "FEHLER: Node.js nicht installiert" >&2
   exit 1
 fi
 
 if [ ! -f "$DEPLOY_DIR/.env" ]; then
-  echo "FEHLER: .env fehlt im deploy-Verzeichnis." >&2
+  echo "FEHLER: .env fehlt" >&2
   exit 1
 fi
 
@@ -74,63 +93,66 @@ echo "Port:    $PORT"
 echo
 
 # -------------------------------------------------------------
-# 5. Docker sauber neu starten
+# 5. Docker starten
 # -------------------------------------------------------------
 cd "$DEPLOY_DIR"
 
-echo "Stoppe bestehende Container..."
-docker compose -f "$COMPOSE_FILE" down || true
+echo "Stoppe Container..."
+docker compose down || true
 
-echo "Ziehe aktuelles Image..."
-docker compose -f "$COMPOSE_FILE" pull
+echo "Ziehe Image..."
+docker compose pull
 
 echo "Starte Dashboard..."
-docker compose -f "$COMPOSE_FILE" up -d
+docker compose up -d
 
 # -------------------------------------------------------------
 # 6. Healthcheck
 # -------------------------------------------------------------
-echo "Warte auf Dashboard..."
-URL="http://localhost:${PORT}/"
+echo "Prüfe Dashboard..."
+URL="http://localhost:${PORT}/api/health"
 
 for i in {1..20}; do
   if curl -fsS "$URL" >/dev/null 2>&1; then
-    echo "Dashboard erfolgreich gestartet."
+    echo "Dashboard läuft."
     break
   fi
   sleep 2
 done
 
 # -------------------------------------------------------------
-# 7. Node-Abhängigkeiten installieren (wichtig!)
+# 7. Node-Abhängigkeiten
 # -------------------------------------------------------------
 if [ -f "$DAEMON_DIR/package.json" ]; then
   echo "Installiere Node-Abhängigkeiten..."
   cd "$DAEMON_DIR"
-  sudo npm ci --omit=dev
+  sudo npm install --omit=dev
 fi
 
 # -------------------------------------------------------------
-# 8. systemd-Service installieren (ERSATZ für Task Scheduler)
+# 8. NODE DAEMON START (GENAU WIE WINDOWS)
 # -------------------------------------------------------------
-if [ -f "$DAEMON_DIR/customer-dashboard-updater.service" ]; then
-  echo "Installiere systemd-Service für Auto-Updater..."
+echo "Starte Auto-Update-Daemon (manuell)..."
 
-  sudo cp "$DAEMON_DIR/customer-dashboard-updater.service" "$SERVICE_FILE"
-  sudo systemctl daemon-reload
-  sudo systemctl enable "$SERVICE_NAME"
-  sudo systemctl restart "$SERVICE_NAME"
+sudo -u root nohup \
+  "$NODE_BIN" "$DAEMON_DIR/daemon.js" \
+  >> "$LOG_DIR/daemon.log" \
+  2>&1 &
 
-  echo "Auto-Update-Daemon läuft jetzt als systemd-Service."
-else
-  echo "WARNUNG: customer-dashboard-updater.service fehlt – kein Auto-Update!"
+
+sleep 2
+
+if ! pgrep -f "$DAEMON_DIR/daemon.js" >/dev/null; then
+  echo "FEHLER: Node-Daemon läuft nicht" >&2
+  exit 1
 fi
 
+echo "Node-Daemon läuft."
+
 # -------------------------------------------------------------
-# 9. Abschluss
+# 9. DONE
 # -------------------------------------------------------------
 echo
-echo "INSTALLATION ABGESCHLOSSEN"
-echo "Dashboard: $URL"
+echo "INSTALLATION ERFOLGREICH"
+echo "Dashboard: http://localhost:${PORT}/"
 echo "Logs:      $LOG_DIR"
-echo "Service:   $SERVICE_NAME (systemd)"

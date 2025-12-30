@@ -9,7 +9,7 @@ function sleep(ms) {
 // system-daemon/daemon.js
 
 /********************************************************************
- * CUSTOMER DASHBOARD – AUTO-UPDATER (Version 6.6.4)
+ * CUSTOMER DASHBOARD – AUTO-UPDATER 
  *
  * Aufgaben:
  *  - periodisch nach neuen Versionen suchen (GitHub / offline / Share)
@@ -29,7 +29,7 @@ const security = require("./security");
 const { checkAndApplySelfUpdate } = require("./selfUpdate");
 
 // ------------------------------------------------------------
-// KONFIGURATION LADEN
+// KONFIGURATION LADEN + OS-NEUTRAL AUFLÖSEN
 // ------------------------------------------------------------
 const CONFIG_PATH =
   process.env.AUTUPDATE_CONFIG || path.join(__dirname, "config.json");
@@ -39,20 +39,52 @@ if (!fs.existsSync(CONFIG_PATH)) {
   process.exit(1);
 }
 
-const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+function resolveInstallRoot() {
+  if (process.env.INSTALL_ROOT) return process.env.INSTALL_ROOT;
+  return process.platform === "win32" ? "C:\\CustomerDashboard" : "/opt/customer-dashboard";
+}
 
-const installRoot = config.paths.installRoot || "C:\\CustomerDashboard";
-const backupRoot = config.paths.backupDir || path.join(installRoot, "backup");
+const INSTALL_ROOT = resolveInstallRoot();
+
+function resolvePaths(obj) {
+  if (typeof obj === "string") {
+    return obj
+      .replace(/__INSTALL_ROOT__/g, INSTALL_ROOT)
+      .replace(
+        /__NETWORK_ROOT__/g,
+        process.platform === "win32"
+          ? "\\\\fileserver\\releases\\customer-dashboard-v2"
+          : "/mnt/releases/customer-dashboard-v2"
+      );
+  }
+  if (Array.isArray(obj)) return obj.map(resolvePaths);
+  if (obj && typeof obj === "object") {
+    const out = {};
+    for (const k of Object.keys(obj)) out[k] = resolvePaths(obj[k]);
+    return out;
+  }
+  return obj;
+}
+
+const rawConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+const config = resolvePaths(rawConfig);
+
+// Jetzt ERST Pfade ableiten
+const installRoot = config.paths?.installRoot || INSTALL_ROOT;
+const backupRoot = config.paths?.backupDir || path.join(installRoot, "backup");
 const statusFile =
-  config.paths.statusFile ||
-  path.join(installRoot, "logs", "update-status.json");
+  config.paths?.statusFile || path.join(installRoot, "logs", "update-status.json");
 
 const intervalMs = config.checkIntervalMs || 5 * 60 * 1000;
 
-// Wrapper um target.log
+// Wrapper um target.log (nachdem config final ist)
 function log(level, message, extra) {
   target.log(level, message, config, extra);
 }
+
+
+
+
 
 // ------------------------------------------------------------
 // STATUSDATEI

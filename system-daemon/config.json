@@ -3,14 +3,14 @@
   "checkIntervalMs": 300000,
 
   "paths": {
-    "installRoot": "C:\\CustomerDashboard",
-    "stagingDir": "C:\\CustomerDashboard\\staging",
-    "backupDir": "C:\\CustomerDashboard\\backup",
-    "statusFile": "C:\\CustomerDashboard\\logs\\update-status.json"
+    "installRoot": "__INSTALL_ROOT__",
+    "stagingDir": "__INSTALL_ROOT__/staging",
+    "backupDir": "__INSTALL_ROOT__/backup",
+    "statusFile": "__INSTALL_ROOT__/logs/update-status.json"
   },
 
   "logging": {
-    "logFile": "C:\\CustomerDashboard\\logs\\daemon.log",
+    "logFile": "__INSTALL_ROOT__/logs/daemon.log",
     "level": "info"
   },
 
@@ -21,33 +21,29 @@
 
   "target": {
     "type": "docker-dashboard",
-    "envFile": "C:\\CustomerDashboard\\deploy\\.env",
+    "envFile": "__INSTALL_ROOT__/deploy/.env",
     "versionKey": "APP_VERSION",
-    "composeFile": "C:\\CustomerDashboard\\deploy\\docker-compose.yml",
+    "composeFile": "__INSTALL_ROOT__/deploy/docker-compose.yml",
     "serviceName": "dashboard",
-    "healthUrl": "http://localhost:8080"
+    "healthUrl": "http://localhost:8080/api/health"
   },
 
   "sources": {
     "github": {
       "enabled": true,
       "apiUrl": "https://api.github.com/repos/leoaigner7/customer-dashboard-v2/releases/latest",
-      "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}",
-      "assetPrefix": "customer-dashboard-v2-",
-      "assetExt": ".zip",
-      "hashExt": ".sha256",
-      "sigExt": ".sig"    
+      "imageTemplate": "ghcr.io/leoaigner7/customer-dashboard-v2:{version}"
     },
     "offlineZip": {
       "enabled": true,
-      "zipPath": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip",
-      "hashFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sha256",
-      "signatureFile": "C:\\CustomerDashboard\\offline\\customer-dashboard-v2-latest.zip.sig",
+      "zipPath": "__INSTALL_ROOT__/offline/customer-dashboard-v2-latest.zip",
+      "hashFile": "__INSTALL_ROOT__/offline/customer-dashboard-v2-latest.zip.sha256",
+      "signatureFile": "__INSTALL_ROOT__/offline/customer-dashboard-v2-latest.zip.sig",
       "version": null
     },
     "networkShare": {
       "enabled": false,
-      "root": "\\\\fileserver\\releases\\customer-dashboard-v2",
+      "root": "__NETWORK_ROOT__",
       "latestFile": "latest.txt"
     }
   },
@@ -55,15 +51,11 @@
   "security": {
     "requireHash": true,
     "requireSignature": true,
-     "publicKeyFile": "C:\\CustomerDashboard\\system-daemon\\trust\\updater-public.pem"
+    "publicKeyFile": "__INSTALL_ROOT__/system-daemon/trust/updater-public.pem"
   },
 
   "selfUpdate": {
-    "enabled": false,
-    "zipUrl": "",
-    "hashUrl": "",
-    "signatureUrl": "",
-    "localZipPath": "C:\\CustomerDashboard\\system-daemon\\daemon-update.zip"
+    "enabled": false
   },
 
   "policy": {
