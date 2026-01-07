@@ -47,7 +47,7 @@ app.get("/api/health", (req, res) => {
 // ----------------------------
 // STATIC REACT BUILD
 // ----------------------------
-const publicPath = path.join(__dirname, "dist");
+const publicPath = path.join(__dirname, "public");
 app.use(express.static(publicPath));
 
 // ----------------------------

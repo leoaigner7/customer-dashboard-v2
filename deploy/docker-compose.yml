@@ -1,19 +1,12 @@
 services:
   dashboard:
-    build:
-      context: ../
-      dockerfile: Dockerfile
-    container_name: deploy-dashboard-1
-    restart: unless-stopped
+    image: ghcr.io/leoaigner7/customer-dashboard-v2:${APP_VERSION}
+    env_file: .env
     ports:
-      - "${APP_PORT:-8080}:8080"
-    environment:
-      - NODE_ENV=production
-    volumes:
-      - ../app/backend/data:/app/backend/data
-      - ../app/frontend/dist:/app/backend/dist 
+      - "${APP_PORT:-8080}:3000"
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 15s
-      timeout: 5s
       retries: 3
+
