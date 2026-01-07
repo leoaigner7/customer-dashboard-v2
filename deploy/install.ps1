@@ -1,122 +1,142 @@
 # =========================================================
-# Customer Dashboard Installer (AUTO-DEPENDENCY Windows)
+# BACHELOR THESIS INSTALLER (WINDOWS SOURCE BUILD)
 # =========================================================
 
 param (
     [string]$ComposeFile = "docker-compose.yml"
 )
 
-Write-Host "=== Customer Dashboard Installer (Windows) ===" -ForegroundColor Cyan
-
-# 0. ADMIN CHECK
-$principal = New-Object Security.Principal.WindowsPrincipal ([Security.Principal.WindowsIdentity]::GetCurrent())
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+# 1. ADMIN RECHTE PRÜFEN
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Error "Bitte Rechtsklick -> 'Als Administrator ausführen'."
     exit 1
 }
 
-# -------------------------------------------------------------
-# 1. AUTO-INSTALLATION DEPENDENCIES (WINGET)
-# -------------------------------------------------------------
+Write-Host "=== Customer Dashboard Installer (Windows) ===" -ForegroundColor Cyan
 
-# Funktion prüft Befehl
-function Test-Command ($cmd) {
-    return (Get-Command $cmd -ErrorAction SilentlyContinue)
-}
+# -------------------------------------------------------------
+# 2. SYSTEM-CHECK (Node & Docker)
+# -------------------------------------------------------------
+function Test-Command ($cmd) { return (Get-Command $cmd -ErrorAction SilentlyContinue) }
 
-# NODE.JS INSTALLIEREN
 if (-not (Test-Command "node")) {
     Write-Host ">> Node.js fehlt. Installiere via Winget..." -ForegroundColor Yellow
     winget install -e --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
-    
-    Write-Host "!! WICHTIG !!" -ForegroundColor Red
-    Write-Host "Node.js wurde installiert. Windows erfordert einen Neustart des Terminals/PCs, damit der Befehl 'node' gefunden wird."
-    Write-Host "Bitte starte dieses Skript nach einem Neustart erneut."
+    Write-Host "!! WICHTIG !! Node.js wurde installiert." -ForegroundColor Red
+    Write-Host "Bitte starte den Computer neu und führe dieses Skript danach noch einmal aus." -ForegroundColor Red
     exit
-} else {
-    Write-Host "✔ Node.js ist installiert." -ForegroundColor Green
 }
 
-# DOCKER INSTALLIEREN
 if (-not (Test-Command "docker")) {
     Write-Host ">> Docker Desktop fehlt. Installiere via Winget..." -ForegroundColor Yellow
     winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
-    
-    Write-Host "!! WICHTIG !!" -ForegroundColor Red
-    Write-Host "Docker Desktop wurde installiert. Du musst dich ab- und anmelden (oder Neustart), damit Docker läuft."
+    Write-Host "!! WICHTIG !! Docker wurde installiert." -ForegroundColor Red
+    Write-Host "Bitte starte den Computer neu und führe dieses Skript danach noch einmal aus." -ForegroundColor Red
     exit
-} else {
-    # Checken ob Docker wirklich läuft
-    docker info > $null 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "WARNUNG: Docker ist installiert, läuft aber nicht. Bitte starte 'Docker Desktop' manuell." -ForegroundColor Yellow
-        # Versuch Docker zu starten
-        Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe" -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 10
-    } else {
-        Write-Host "✔ Docker läuft." -ForegroundColor Green
+}
+
+# Prüfen ob Docker läuft
+if (-not (Get-Process "Docker Desktop" -ErrorAction SilentlyContinue)) {
+    Write-Host ">> Starte Docker Desktop..."
+    Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe" -ErrorAction SilentlyContinue
+    Write-Host "   Warte auf Docker Engine..."
+    $retries = 0
+    while ($true) {
+        docker info > $null 2>&1
+        if ($LASTEXITCODE -eq 0) { break }
+        Start-Sleep -Seconds 2
+        Write-Host -NoNewline "."
+        $retries++
+        if ($retries -gt 30) { Write-Error "Docker startet nicht. Bitte manuell prüfen."; exit 1 }
     }
+    Write-Host " Bereit."
 }
 
 # -------------------------------------------------------------
-# 2. STANDARD SETUP
+# 3. DATEIEN KOPIEREN
 # -------------------------------------------------------------
 $InstallDir   = "C:\CustomerDashboard"
 $DeployDir    = "$InstallDir\deploy"
 $DaemonDir    = "$InstallDir\system-daemon"
+$FrontendDir  = "$InstallDir\app\frontend"
 $LogDir       = "$InstallDir\logs"
 
-# HIER KORREKTUR: Pfad dynamisch finden statt hardcoded!
-$NodeExe = (Get-Command node).Source 
-$DaemonJs = "$DaemonDir\daemon.js"
-
-Write-Host "Installiere nach: $InstallDir"
-
-# Verzeichnisse
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-New-Item -ItemType Directory -Force -Path $DeployDir  | Out-Null
-New-Item -ItemType Directory -Force -Path $DaemonDir  | Out-Null
-New-Item -ItemType Directory -Force -Path $LogDir     | Out-Null
-
-# Dateien kopieren (Relativ vom Skript-Ort)
+# Wo sind wir?
 $ScriptRoot = Split-Path $MyInvocation.MyCommand.Path
-$PackageRoot = Split-Path $ScriptRoot -Parent
+$SourceRoot = Split-Path $ScriptRoot -Parent
 
-Write-Host "Kopiere Dateien..."
-Copy-Item -Recurse -Force "$ScriptRoot\*"        $DeployDir
-Copy-Item -Recurse -Force "$PackageRoot\system-daemon\*" $DaemonDir
+Write-Host ">> Installiere nach: $InstallDir"
 
-# Public Key
+# Ordner bereinigen für sauberen Build
+if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+# Kopieren
+Copy-Item -Recurse -Force "$SourceRoot\*" $InstallDir
+
+# -------------------------------------------------------------
+# 4. FRONTEND BAUEN
+# -------------------------------------------------------------
+Write-Host ">> Baue Frontend (React)..." -ForegroundColor Cyan
+Set-Location $FrontendDir
+
+# Abhängigkeiten installieren & Bauen
+cmd /c "npm install --silent"
+cmd /c "npm run build"
+
+if (-not (Test-Path "dist\index.html")) {
+    Write-Error "Frontend Build fehlgeschlagen! 'dist/index.html' wurde nicht erstellt."
+    exit 1
+}
+Write-Host "✔ Frontend gebaut." -ForegroundColor Green
+
+# -------------------------------------------------------------
+# 5. DAEMON VORBEREITEN
+# -------------------------------------------------------------
+Write-Host ">> Bereite Daemon vor..." -ForegroundColor Cyan
+Set-Location $DaemonDir
+# Windows-spezifische Dependencies installieren
+cmd /c "npm install --omit=dev --silent"
+
+# Key sicherstellen
 $TrustDir = "$DaemonDir\trust"
-$SourcePublicKey = "$PackageRoot\system-daemon\trust\updater-public.pem"
-if (Test-Path $SourcePublicKey) {
+if (-not (Test-Path "$TrustDir\updater-public.pem")) {
     New-Item -ItemType Directory -Force -Path $TrustDir | Out-Null
-    Copy-Item -Force $SourcePublicKey "$TrustDir\updater-public.pem"
-    Write-Host "✔ Public Key kopiert."
+    Copy-Item -Force "$InstallDir\system-daemon\trust\updater-public.pem" "$TrustDir\"
 }
 
 # -------------------------------------------------------------
-# 3. DOCKER START
+# 6. DOCKER STARTEN
 # -------------------------------------------------------------
-Write-Host "Starte Dashboard Container..."
+Write-Host ">> Starte Docker Container..." -ForegroundColor Cyan
 Set-Location $DeployDir
-docker compose up -d --pull always
+docker compose down --volumes --remove-orphans 2>$null
+docker compose up -d --build --remove-orphans
 
 # -------------------------------------------------------------
-# 4. NODE DAEMON START
+# 7. DAEMON STARTEN
 # -------------------------------------------------------------
-Write-Host "Installiere Node Module für Daemon..."
-Set-Location $DaemonDir
-# npm install --production, aber unter Windows oft ohne sudo
-cmd /c "npm install --omit=dev --silent"
+Write-Host ">> Starte Update-Daemon..."
+$NodeExe = (Get-Command node).Source
+$DaemonJs = "$DaemonDir\daemon.js"
 
-Write-Host "Starte Auto-Update-Daemon..."
-# Stoppe alten Prozess falls vorhanden
+# Alten Daemon killen
 Get-Process node -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $NodeExe} | Stop-Process -Force -ErrorAction SilentlyContinue
 
+# Daemon unsichtbar starten
 Start-Process -FilePath $NodeExe -ArgumentList $DaemonJs -WorkingDirectory $DaemonDir -WindowStyle Hidden
 
-# Healthcheck
-Start-Sleep -Seconds 5
-Write-Host "INSTALLATION FERTIG." -ForegroundColor Green
-Write-Host "Dashboard: http://localhost:8080/"
+Write-Host "Warte auf Healthcheck..."
+Start-Sleep -Seconds 10
+
+# Finaler Check
+try {
+    $response = Invoke-WebRequest -Uri "http://localhost:8080/api/health" -UseBasicParsing -TimeoutSec 2
+    if ($response.StatusCode -eq 200) {
+        Write-Host "INSTALLATION ERFOLGREICH!" -ForegroundColor Green
+        Write-Host "   Dashboard: http://localhost:8080/"
+    }
+} catch {
+    Write-Host "Container startet noch (Boot dauert etwas). Prüfe gleich: http://localhost:8080/" -ForegroundColor Yellow
+}
