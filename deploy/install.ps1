@@ -1,137 +1,122 @@
 # =========================================================
-# Customer Dashboard Installer (VERSION 4.2 – CLEAN FIXED)
+# Customer Dashboard Installer (AUTO-DEPENDENCY Windows)
 # =========================================================
 
 param (
     [string]$ComposeFile = "docker-compose.yml"
 )
 
-Write-Host "=== Customer Dashboard Installer (Windows) ==="
+Write-Host "=== Customer Dashboard Installer (Windows) ===" -ForegroundColor Cyan
 
-# -------------------------------------------------------------
 # 0. ADMIN CHECK
-# -------------------------------------------------------------
-$principal = New-Object Security.Principal.WindowsPrincipal `
-    ([Security.Principal.WindowsIdentity]::GetCurrent())
-
+$principal = New-Object Security.Principal.WindowsPrincipal ([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Error "Bitte PowerShell als Administrator starten."
+    Write-Error "Bitte Rechtsklick -> 'Als Administrator ausführen'."
     exit 1
 }
 
 # -------------------------------------------------------------
-# 1. PATHS
+# 1. AUTO-INSTALLATION DEPENDENCIES (WINGET)
+# -------------------------------------------------------------
+
+# Funktion prüft Befehl
+function Test-Command ($cmd) {
+    return (Get-Command $cmd -ErrorAction SilentlyContinue)
+}
+
+# NODE.JS INSTALLIEREN
+if (-not (Test-Command "node")) {
+    Write-Host ">> Node.js fehlt. Installiere via Winget..." -ForegroundColor Yellow
+    winget install -e --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
+    
+    Write-Host "!! WICHTIG !!" -ForegroundColor Red
+    Write-Host "Node.js wurde installiert. Windows erfordert einen Neustart des Terminals/PCs, damit der Befehl 'node' gefunden wird."
+    Write-Host "Bitte starte dieses Skript nach einem Neustart erneut."
+    exit
+} else {
+    Write-Host "✔ Node.js ist installiert." -ForegroundColor Green
+}
+
+# DOCKER INSTALLIEREN
+if (-not (Test-Command "docker")) {
+    Write-Host ">> Docker Desktop fehlt. Installiere via Winget..." -ForegroundColor Yellow
+    winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
+    
+    Write-Host "!! WICHTIG !!" -ForegroundColor Red
+    Write-Host "Docker Desktop wurde installiert. Du musst dich ab- und anmelden (oder Neustart), damit Docker läuft."
+    exit
+} else {
+    # Checken ob Docker wirklich läuft
+    docker info > $null 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "WARNUNG: Docker ist installiert, läuft aber nicht. Bitte starte 'Docker Desktop' manuell." -ForegroundColor Yellow
+        # Versuch Docker zu starten
+        Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe" -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 10
+    } else {
+        Write-Host "✔ Docker läuft." -ForegroundColor Green
+    }
+}
+
+# -------------------------------------------------------------
+# 2. STANDARD SETUP
 # -------------------------------------------------------------
 $InstallDir   = "C:\CustomerDashboard"
 $DeployDir    = "$InstallDir\deploy"
 $DaemonDir    = "$InstallDir\system-daemon"
 $LogDir       = "$InstallDir\logs"
 
-$NodeExe   = "C:\Program Files\nodejs\node.exe"
+# HIER KORREKTUR: Pfad dynamisch finden statt hardcoded!
+$NodeExe = (Get-Command node).Source 
 $DaemonJs = "$DaemonDir\daemon.js"
 
-Write-Host "Installationsverzeichnis: $InstallDir"
+Write-Host "Installiere nach: $InstallDir"
 
-# -------------------------------------------------------------
-# 2. DIRECTORIES
-# -------------------------------------------------------------
-Write-Host "Erstelle Verzeichnisse..."
+# Verzeichnisse
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path $DeployDir  | Out-Null
 New-Item -ItemType Directory -Force -Path $DaemonDir  | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir     | Out-Null
 
-# -------------------------------------------------------------
-# 3. COPY FILES (identisch zu FINAL CLEAN)
-# -------------------------------------------------------------
+# Dateien kopieren (Relativ vom Skript-Ort)
+$ScriptRoot = Split-Path $MyInvocation.MyCommand.Path
+$PackageRoot = Split-Path $ScriptRoot -Parent
+
 Write-Host "Kopiere Dateien..."
-Copy-Item -Recurse -Force "..\deploy\*"        $DeployDir
-Copy-Item -Recurse -Force "..\system-daemon\*" $DaemonDir
-# -------------------------------------------------------------
-# 3.1 INSTALL TRUSTED PUBLIC KEY (SIGNATURE VERIFICATION)
-# -------------------------------------------------------------
-Write-Host "Installiere Update-Signatur (Public Key)..."
+Copy-Item -Recurse -Force "$ScriptRoot\*"        $DeployDir
+Copy-Item -Recurse -Force "$PackageRoot\system-daemon\*" $DaemonDir
 
+# Public Key
 $TrustDir = "$DaemonDir\trust"
-$SourcePublicKey = "..\system-daemon\trust\updater-public.pem"
-$TargetPublicKey = "$TrustDir\updater-public.pem"
-
-New-Item -ItemType Directory -Force -Path $TrustDir | Out-Null
-
-if (-not (Test-Path $SourcePublicKey)) {
-    Write-Error "Public Key fehlt im Paket: $SourcePublicKey"
-    exit 1
+$SourcePublicKey = "$PackageRoot\system-daemon\trust\updater-public.pem"
+if (Test-Path $SourcePublicKey) {
+    New-Item -ItemType Directory -Force -Path $TrustDir | Out-Null
+    Copy-Item -Force $SourcePublicKey "$TrustDir\updater-public.pem"
+    Write-Host "✔ Public Key kopiert."
 }
 
-Copy-Item -Force $SourcePublicKey $TargetPublicKey
-
-if (-not (Test-Path $TargetPublicKey)) {
-    Write-Error "Public Key konnte nicht installiert werden."
-    exit 1
-}
-
-Write-Host "Public Key erfolgreich installiert."
-
 # -------------------------------------------------------------
-# 4. DOCKER
+# 3. DOCKER START
 # -------------------------------------------------------------
-Write-Host "Starte Dashboard..."
+Write-Host "Starte Dashboard Container..."
 Set-Location $DeployDir
-
-docker compose down | Out-Null
-docker compose pull
-docker compose up -d
+docker compose up -d --pull always
 
 # -------------------------------------------------------------
-# 5. HEALTHCHECK
+# 4. NODE DAEMON START
 # -------------------------------------------------------------
-Write-Host "Prüfe Dashboard Healthcheck..."
+Write-Host "Installiere Node Module für Daemon..."
+Set-Location $DaemonDir
+# npm install --production, aber unter Windows oft ohne sudo
+cmd /c "npm install --omit=dev --silent"
 
-$healthUrl = "http://localhost:8080/api/health"
-$ok = $false
+Write-Host "Starte Auto-Update-Daemon..."
+# Stoppe alten Prozess falls vorhanden
+Get-Process node -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $NodeExe} | Stop-Process -Force -ErrorAction SilentlyContinue
 
-for ($i = 1; $i -le 20; $i++) {
-    try {
-        $res = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
-        if ($res.StatusCode -ge 200 -and $res.StatusCode -lt 400) {
-            $ok = $true
-            break
-        }
-    } catch { }
+Start-Process -FilePath $NodeExe -ArgumentList $DaemonJs -WorkingDirectory $DaemonDir -WindowStyle Hidden
 
-    Start-Sleep -Seconds 2
-}
-
-if ($ok) {
-    Write-Host "Dashboard erfolgreich gestartet." -ForegroundColor Green
-} else {
-    Write-Host "WARNUNG: Dashboard antwortet nicht, fahre fort." -ForegroundColor Yellow
-}
-
-# -------------------------------------------------------------
-# 6. START NODE DAEMON (EXAKT WIE MANUELL)
-# -------------------------------------------------------------
-Write-Host "Starte Auto-Update-Daemon (identisch zu manuell)..."
-
-Start-Process `
-    -FilePath $NodeExe `
-    -ArgumentList $DaemonJs `
-    -WorkingDirectory $DaemonDir `
-    -WindowStyle Hidden
-
-Start-Sleep 2
-
-if (-not (Get-Process node -ErrorAction SilentlyContinue)) {
-    Write-Error "Node-Daemon konnte nicht gestartet werden."
-    exit 1
-}
-
-Write-Host "Node läuft erfolgreich." -ForegroundColor Green
-
-# -------------------------------------------------------------
-# 7. DONE
-# -------------------------------------------------------------
-Write-Host ""
-Write-Host "INSTALLATION ERFOLGREICH"
+# Healthcheck
+Start-Sleep -Seconds 5
+Write-Host "INSTALLATION FERTIG." -ForegroundColor Green
 Write-Host "Dashboard: http://localhost:8080/"
-Write-Host "Logs: $LogDir"

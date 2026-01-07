@@ -15,14 +15,13 @@ const { spawn } = require("child_process");
  *  - extra: optionale Zusatzinfos (z.B. Version, Dauer, Fehlertext)
  */
 function log(level, message, config, extra = undefined) {
+  const defaultLogPath = process.platform === "win32"
+    ? "C:\\CustomerDashboard\\logs\\daemon.log"
+    : "/opt/customer-dashboard/logs/daemon.log";
   const logFile =
-    (config &&
-      config.logging &&
-      config.logging.logFile) ||
-    (config &&
-      config.notification &&
-      config.notification.logFile) ||
-    "C:\\CustomerDashboard\\logs\\daemon.log";
+    (config && config.logging && config.logging.logFile) ||
+    (config && config.notification && config.notification.logFile) ||
+    defaultLogPath;
 
   const entry = {
     ts: new Date().toISOString(),

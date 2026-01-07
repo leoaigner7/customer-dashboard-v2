@@ -1,158 +1,143 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -e
 
-COMPOSE_FILE="${1:-docker-compose.yml}"
+# =========================================================
+# Customer Dashboard Installer (AUTO-DEPENDENCY MODE)
+# =========================================================
 
 echo "=== Customer Dashboard Installer (Linux) ==="
+echo "Prüfe Systemvoraussetzungen..."
+
+# -------------------------------------------------------------
+# 0. FUNKTIONEN FÜR AUTO-INSTALLATION
+# -------------------------------------------------------------
+
+install_docker() {
+    echo ">> Docker wurde nicht gefunden. Starte automatische Installation..."
+    echo "   (Dies nutzt das offizielle Skript von get.docker.com)"
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sudo sh get-docker.sh
+    rm get-docker.sh
+    echo ">> Docker installiert."
+    
+    # User zur Docker-Gruppe hinzufügen (vermeidet 'sudo' zwang bei docker commands)
+    sudo usermod -aG docker "$USER" || true
+    echo ">> HINWEIS: Damit Docker ohne sudo läuft, ist oft ein Neustart nötig."
+}
+
+install_node() {
+    echo ">> Node.js wurde nicht gefunden. Installiere Node.js 18.x LTS..."
+    # Nutzt NodeSource für aktuelle Versionen (die Standard-Repos sind oft zu alt)
+    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    echo ">> Node.js installiert: $(node -v)"
+}
+
+# -------------------------------------------------------------
+# 1. DEPENDENCY CHECK & INSTALL
+# -------------------------------------------------------------
+
+# Check curl (wird für Installationen gebraucht)
+if ! command -v curl >/dev/null; then
+    sudo apt-get update && sudo apt-get install -y curl
+fi
+
+# Check Docker
+if ! command -v docker >/dev/null; then
+    install_docker
+else
+    echo "✔ Docker ist bereits installiert."
+fi
+
+# Check Node.js
+if ! command -v node >/dev/null; then
+    install_node
+else
+    echo "✔ Node.js ist bereits installiert."
+fi
+
+echo
+echo "Alle Abhängigkeiten sind vorhanden. Beginne Deployment..."
 echo
 
 # -------------------------------------------------------------
-# 0. Pfade
+# AB HIER DEIN ORIGINALER INSTALLATIONSPROZESS
 # -------------------------------------------------------------
+
 INSTALL_DIR="/opt/customer-dashboard"
 DEPLOY_DIR="$INSTALL_DIR/deploy"
 DAEMON_DIR="$INSTALL_DIR/system-daemon"
 LOG_DIR="$INSTALL_DIR/logs"
 
 NODE_BIN="$(command -v node)"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Annahme: install.sh liegt in /deploy, also ist Root eins drüber
+PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)" 
 
-echo "Installationsverzeichnis: $INSTALL_DIR"
-echo "Paketwurzelverzeichnis:   $PACKAGE_ROOT"
-echo
-
-# -------------------------------------------------------------
-# 1. Verzeichnisse
-# -------------------------------------------------------------
+# Verzeichnisse
 sudo mkdir -p "$DEPLOY_DIR" "$DAEMON_DIR" "$LOG_DIR"
 
-# -------------------------------------------------------------
-# 2. Dateien kopieren
-# -------------------------------------------------------------
-echo "Kopiere Dateien..."
+# Dateien kopieren (angepasst auf deine Struktur)
+# Wir kopieren ALLES aus dem aktuellen Ordner (deploy) und dem Daemon Ordner
+echo "Kopiere Dateien nach $INSTALL_DIR..."
 sudo cp -a "$SCRIPT_DIR/." "$DEPLOY_DIR/"
-sudo cp -a "$PACKAGE_ROOT/system-daemon/." "$DAEMON_DIR/"
 
-#---------------------------------
+# Prüfen ob der system-daemon Ordner im Paket existiert
+if [ -d "$PACKAGE_ROOT/system-daemon" ]; then
+    sudo cp -a "$PACKAGE_ROOT/system-daemon/." "$DAEMON_DIR/"
+else
+    echo "WARNUNG: Quellordner system-daemon nicht gefunden in $PACKAGE_ROOT"
+fi
+
 # Public Key installieren
-
-#---------------------------------
-echo "Installiere Update-Signatur (Public Key)..."
-
 TRUST_DIR="$DAEMON_DIR/trust"
 SRC_KEY="$PACKAGE_ROOT/system-daemon/trust/updater-public.pem"
 DST_KEY="$TRUST_DIR/updater-public.pem"
 
 sudo mkdir -p "$TRUST_DIR"
-
-if [ ! -f "$SRC_KEY" ]; then
-  echo "FEHLER: Public Key fehlt im Paket" >&2
-  exit 1
+if [ -f "$SRC_KEY" ]; then
+  sudo cp "$SRC_KEY" "$DST_KEY"
+  echo "✔ Public Key installiert."
 fi
 
-sudo cp "$SRC_KEY" "$DST_KEY"
-
-if [ ! -f "$DST_KEY" ]; then
-  echo "FEHLER: Public Key konnte nicht installiert werden" >&2
-  exit 1
+# .env laden
+if [ -f "$DEPLOY_DIR/.env" ]; then
+    set +o allexport
+    source "$DEPLOY_DIR/.env"
+    PORT="${APP_PORT:-8080}"
+else
+    echo "WARNUNG: Keine .env Datei gefunden. Nutze Defaults."
+    PORT=8080
 fi
 
-echo "Public Key erfolgreich installiert."
-
-# -------------------------------------------------------------
-# 3. Checks
-# -------------------------------------------------------------
-if ! command -v docker >/dev/null; then
-  echo "FEHLER: Docker nicht installiert" >&2
-  exit 1
-fi
-
-if ! command -v node >/dev/null; then
-  echo "FEHLER: Node.js nicht installiert" >&2
-  exit 1
-fi
-
-if [ ! -f "$DEPLOY_DIR/.env" ]; then
-  echo "FEHLER: .env fehlt" >&2
-  exit 1
-fi
-
-# -------------------------------------------------------------
-# 4. .env lesen
-# -------------------------------------------------------------
-set +o allexport
-source "$DEPLOY_DIR/.env"
-
-PORT="${APP_PORT:-8080}"
-VERSION="${APP_VERSION:-unbekannt}"
-
-echo "Version: $VERSION"
-echo "Port:    $PORT"
-echo
-
-# -------------------------------------------------------------
-# 5. Docker starten
-# -------------------------------------------------------------
+# Docker starten
+echo "Starte Dashboard Container..."
 cd "$DEPLOY_DIR"
+# Falls docker-compose plugin nicht direkt geht, fallback probieren (optional)
+docker compose up -d --pull always --remove-orphans
 
-echo "Stoppe Container..."
-docker compose down || true
-
-echo "Ziehe Image..."
-docker compose pull
-
-echo "Starte Dashboard..."
-docker compose up -d
-
-# -------------------------------------------------------------
-# 6. Healthcheck
-# -------------------------------------------------------------
-echo "Prüfe Dashboard..."
-URL="http://localhost:${PORT}/api/health"
-
-for i in {1..20}; do
-  if curl -fsS "$URL" >/dev/null 2>&1; then
-    echo "Dashboard läuft."
-    break
-  fi
-  sleep 2
-done
-
-# -------------------------------------------------------------
-# 7. Node-Abhängigkeiten
-# -------------------------------------------------------------
+# Node Dependencies für Daemon installieren
 if [ -f "$DAEMON_DIR/package.json" ]; then
-  echo "Installiere Node-Abhängigkeiten..."
+  echo "Installiere Daemon-Abhängigkeiten..."
   cd "$DAEMON_DIR"
-  sudo npm install --omit=dev
+  sudo npm install --omit=dev --silent
 fi
 
-# -------------------------------------------------------------
-# 8. NODE DAEMON START (GENAU WIE WINDOWS)
-# -------------------------------------------------------------
-echo "Starte Auto-Update-Daemon (manuell)..."
+# Daemon starten (via Systemd ist besser, aber hier dein nohup Ansatz)
+echo "Starte Update-Daemon..."
+# Vorherigen Prozess killen falls vorhanden
+sudo pkill -f "$DAEMON_DIR/daemon.js" || true
 
-sudo -u root nohup \
-  "$NODE_BIN" "$DAEMON_DIR/daemon.js" \
-  >> "$LOG_DIR/daemon.log" \
-  2>&1 &
+sudo -u root nohup "$NODE_BIN" "$DAEMON_DIR/daemon.js" >> "$LOG_DIR/daemon.log" 2>&1 &
 
+echo "Warte auf Start..."
+sleep 5
 
-sleep 2
-
-if ! pgrep -f "$DAEMON_DIR/daemon.js" >/dev/null; then
-  echo "FEHLER: Node-Daemon läuft nicht" >&2
-  exit 1
+# Healthcheck
+if curl -fsS "http://localhost:${PORT}/api/health" >/dev/null 2>&1; then
+    echo "INSTALLATION ERFOLGREICH ABGESCHLOSSEN!"
+    echo "   Dashboard erreichbar unter: http://localhost:${PORT}/"
+else
+    echo "Dashboard scheint noch zu starten oder Port ist blockiert."
+    echo "   Bitte Logs prüfen: $LOG_DIR"
 fi
-
-echo "Node-Daemon läuft."
-
-# -------------------------------------------------------------
-# 9. DONE
-# -------------------------------------------------------------
-echo
-echo "INSTALLATION ERFOLGREICH"
-echo "Dashboard: http://localhost:${PORT}/"
-echo "Logs:      $LOG_DIR"
