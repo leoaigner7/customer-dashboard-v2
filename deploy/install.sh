@@ -2,149 +2,181 @@
 set -e
 
 # =========================================================
-# BACHELOR THESIS INSTALLER (ROBUST & DEBUG MODE)
+# BACHELOR THESIS INSTALLER (BULLETPROOF VERSION)
 # =========================================================
 
-# 1. AUTO-ROOT
+# 1. AUTO-ROOT: Sicherstellen, dass wir Root sind
 if [ "$EUID" -ne 0 ]; then
-  echo ">> Benötige Root-Rechte für Installation..."
+  echo ">> Das Skript benötigt Root-Rechte. Starte neu mit sudo..."
   exec sudo "$0" "$@"
   exit
 fi
 
-echo "=== Customer Dashboard Installer (Linux) ==="
+echo "=== Customer Dashboard Installer (Linux Robust) ==="
 
 # -------------------------------------------------------------
-# 1. ABHÄNGIGKEITEN
+# 1. PFADE ERMITTELN & PRÜFEN
 # -------------------------------------------------------------
-if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl; fi
-
-if ! command -v docker >/dev/null; then 
-    echo ">> Installiere Docker..."
-    curl -fsSL https://get.docker.com -o get-docker.sh
-    sh get-docker.sh
-    rm get-docker.sh
-fi
-
-if ! command -v node >/dev/null; then
-    echo ">> Installiere Node.js..."
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-    apt-get install -y nodejs
-fi
-
-# -------------------------------------------------------------
-# 2. DATEIEN KOPIEREN (ROBUST)
-# -------------------------------------------------------------
-INSTALL_DIR="/opt/customer-dashboard"
+# Wo liegt dieses Skript gerade?
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Der Projekt-Root ist einen Ordner drüber
 SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+INSTALL_DIR="/opt/customer-dashboard"
 
-echo ">> Bereite Installationsverzeichnis vor ($INSTALL_DIR)..."
-# Alte Container stoppen
-if [ -f "$INSTALL_DIR/deploy/docker-compose.yml" ]; then
-    (cd "$INSTALL_DIR/deploy" && docker compose down 2>/dev/null || true)
-fi
+echo ">> Quellverzeichnis:  $SOURCE_ROOT"
+echo ">> Zielverzeichnis:   $INSTALL_DIR"
 
-rm -rf "$INSTALL_DIR"
-mkdir -p "$INSTALL_DIR"
-
-echo ">> Quellverzeichnis ist: $SOURCE_ROOT"
-echo ">> Kopiere Dateien (dieser Schritt wurde verbessert)..."
-
-# ROBUSTER KOPIER-BEFEHL: Kopiert alles, auch versteckte Dateien
-cp -R "$SOURCE_ROOT/"* "$INSTALL_DIR/" 2>/dev/null || true
-cp -R "$SOURCE_ROOT/." "$INSTALL_DIR/" 2>/dev/null || true
-
-# Check, ob 'app' Ordner da ist
-if [ ! -d "$INSTALL_DIR/app" ]; then
-    echo "❌ FEHLER: Der Ordner 'app' wurde nicht kopiert."
-    echo "   Inhalt von $INSTALL_DIR ist:"
-    ls -F "$INSTALL_DIR"
+# Prüfen, ob wir im richtigen Ordner sind
+if [ ! -d "$SOURCE_ROOT/app" ]; then
+    echo "❌ KRITISCHER FEHLER: Kann den Ordner 'app' in $SOURCE_ROOT nicht finden."
+    echo "   Bitte stelle sicher, dass du das Skript aus dem 'deploy'-Ordner startest."
+    echo "   Aktueller Inhalt von $SOURCE_ROOT:"
+    ls -F "$SOURCE_ROOT"
     exit 1
 fi
 
-# Pfade setzen
+# -------------------------------------------------------------
+# 2. ABHÄNGIGKEITEN
+# -------------------------------------------------------------
+echo
+echo ">> [1/6] Prüfe Software..."
+if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl; fi
+
+if ! command -v docker >/dev/null; then 
+    echo "   Installiere Docker..."
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sh get-docker.sh
+    rm get-docker.sh
+else
+    echo "   ✔ Docker ist da."
+fi
+
+if ! command -v node >/dev/null; then
+    echo "   Installiere Node.js..."
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+    apt-get install -y nodejs
+else
+    echo "   ✔ Node.js ist da."
+fi
+
+# -------------------------------------------------------------
+# 3. DATEIEN KOPIEREN (Einzeln & Gezielt)
+# -------------------------------------------------------------
+echo
+echo ">> [2/6] Bereite Installation vor..."
+
+# Alte Container stoppen, falls sie laufen
+if [ -f "$INSTALL_DIR/deploy/docker-compose.yml" ]; then
+    echo "   Stoppe alte Container..."
+    (cd "$INSTALL_DIR/deploy" && docker compose down 2>/dev/null || true)
+fi
+
+# Zielordner frisch machen
+rm -rf "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
+
+echo ">> [3/6] Kopiere Dateien..."
+
+# 1. App Ordner (Frontend & Backend)
+echo "   Kopiere 'app'..."
+cp -r "$SOURCE_ROOT/app" "$INSTALL_DIR/"
+
+# 2. System Daemon
+echo "   Kopiere 'system-daemon'..."
+cp -r "$SOURCE_ROOT/system-daemon" "$INSTALL_DIR/"
+
+# 3. Deploy Ordner
+echo "   Kopiere 'deploy'..."
+cp -r "$SOURCE_ROOT/deploy" "$INSTALL_DIR/"
+
+# 4. Einzeldateien (Wichtig für Docker Build!)
+echo "   Kopiere Root-Dateien..."
+cp "$SOURCE_ROOT/Dockerfile" "$INSTALL_DIR/" 2>/dev/null || echo "   ⚠️ Dockerfile nicht im Root (OK, wenn es im Build Context ist)"
+cp "$SOURCE_ROOT/package.json" "$INSTALL_DIR/" 2>/dev/null || true
+cp "$SOURCE_ROOT/.dockerignore" "$INSTALL_DIR/" 2>/dev/null || true
+
+# Check ob Frontend angekommen ist
+if [ ! -d "$INSTALL_DIR/app/frontend" ]; then
+    echo "❌ FEHLER: Kopieren fehlgeschlagen. '$INSTALL_DIR/app/frontend' fehlt."
+    exit 1
+fi
+echo "✔ Dateien erfolgreich kopiert."
+
+# Pfade im Zielsystem definieren
 TARGET_DEPLOY="$INSTALL_DIR/deploy"
 TARGET_DAEMON="$INSTALL_DIR/system-daemon"
 TARGET_FRONTEND="$INSTALL_DIR/app/frontend"
 TARGET_LOGS="$INSTALL_DIR/logs"
-
 mkdir -p "$TARGET_LOGS"
 
 # -------------------------------------------------------------
-# 3. FRONTEND BAUEN
+# 4. FRONTEND BAUEN
 # -------------------------------------------------------------
 echo
-echo ">> Baue Frontend (React)..."
-if [ -d "$TARGET_FRONTEND" ]; then
-    cd "$TARGET_FRONTEND"
-    rm -rf node_modules package-lock.json dist
-    
-    echo "   Installiere npm Pakete..."
-    npm install --silent
-    
-    echo "   Erstelle Build..."
-    npm run build
-    
-    if [ -d "dist" ]; then
-        echo "✔ Frontend erfolgreich gebaut."
-    else
-        echo "❌ FEHLER: 'dist' Ordner wurde nicht erstellt."
-        exit 1
-    fi
+echo ">> [4/6] Baue Frontend (React)..."
+cd "$TARGET_FRONTEND"
+
+# Aufräumen (Windows Reste entfernen)
+rm -rf node_modules package-lock.json dist
+
+echo "   Installiere npm Pakete (kann dauern)..."
+npm install --silent
+
+echo "   Erstelle Production Build..."
+npm run build
+
+if [ -f "dist/index.html" ]; then
+    echo "✔ Frontend Build erfolgreich."
 else
-    echo "❌ FEHLER: Frontend Ordner fehlt unter: $TARGET_FRONTEND"
-    echo "   Verfügbare Ordner in /app:"
-    ls -F "$INSTALL_DIR/app"
+    echo "❌ FEHLER: Build fehlgeschlagen. 'dist/index.html' nicht gefunden."
     exit 1
 fi
 
 # -------------------------------------------------------------
-# 4. DAEMON INSTALLIEREN
+# 5. DAEMON EINRICHTEN
 # -------------------------------------------------------------
 echo
-echo ">> Installiere Daemon..."
+echo ">> [5/6] Richte Update-Daemon ein..."
 cd "$TARGET_DAEMON"
 rm -rf node_modules package-lock.json
 npm install --omit=dev --silent
 
+# Key Handling
 mkdir -p trust
 if [ ! -f "trust/updater-public.pem" ]; then
-    # Versuche Key zu finden (manchmal in system-daemon root oder trust folder)
-    if [ -f "../updater-public.pem" ]; then cp "../updater-public.pem" trust/; fi
-    if [ -f "$SOURCE_ROOT/system-daemon/trust/updater-public.pem" ]; then cp "$SOURCE_ROOT/system-daemon/trust/updater-public.pem" trust/; fi
+    # Suche Key im Source
+    if [ -f "$SOURCE_ROOT/system-daemon/trust/updater-public.pem" ]; then 
+        cp "$SOURCE_ROOT/system-daemon/trust/updater-public.pem" trust/
+        echo "✔ Key kopiert."
+    else
+        echo "⚠️  WARNUNG: Kein Public Key gefunden. Updates werden eventuell nicht funktionieren."
+    fi
 fi
 
 # -------------------------------------------------------------
-# 5. DOCKER STARTEN
+# 6. STARTEN
 # -------------------------------------------------------------
 echo
-echo ">> Starte Docker Container..."
-cd "$TARGET_DEPLOY"
+echo ">> [6/6] Starte Dienste..."
 
-# Docker command resolution
+# A) Docker
+cd "$TARGET_DEPLOY"
+echo "   Fahre Docker hoch..."
+# Wähle richtigen Befehl
 if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
 
-$DC down --volumes --remove-orphans 2>/dev/null || true
 $DC up -d --build --remove-orphans
 
-# -------------------------------------------------------------
-# 6. DAEMON STARTEN
-# -------------------------------------------------------------
-echo ">> Starte Update-Dienst..."
+# B) Daemon
+echo "   Starte Hintergrund-Daemon..."
 pkill -f "system-daemon/daemon.js" || true
 nohup node "$TARGET_DAEMON/daemon.js" >> "$TARGET_LOGS/daemon.log" 2>&1 &
 
 echo
-echo "Warte auf Systemstart (max 30 sek)..."
-for i in {1..30}; do
-    if curl -s "http://localhost:8080/api/health" >/dev/null; then
-        echo "✅ INSTALLATION ERFOLGREICH!"
-        echo "   Dashboard: http://localhost:8080/"
-        exit 0
-    fi
-    sleep 1
-done
-
-echo "⚠️  Zeitüberschreitung beim Healthcheck. Container läuft wahrscheinlich trotzdem."
-echo "   Prüfe: http://localhost:8080/"
+echo "---------------------------------------------------"
+echo "   INSTALLATION ABGESCHLOSSEN!"
+echo "---------------------------------------------------"
+echo "1. Dashboard:  http://localhost:8080/"
+echo "2. Logs:       $TARGET_LOGS/daemon.log"
+echo "3. API-Check:  curl http://localhost:8080/api/health"
+echo "---------------------------------------------------"
