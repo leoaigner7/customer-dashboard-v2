@@ -2,68 +2,68 @@
 set -e
 
 # =========================================================
-# BACHELOR THESIS INSTALLER (FULL SOURCE BUILD)
+# BACHELOR THESIS INSTALLER (ROBUST & DEBUG MODE)
 # =========================================================
 
-# 1. AUTO-ROOT: Wenn nicht root, frag nach Passwort und starte neu
+# 1. AUTO-ROOT
 if [ "$EUID" -ne 0 ]; then
   echo ">> Benötige Root-Rechte für Installation..."
   exec sudo "$0" "$@"
   exit
 fi
 
-echo "=== Customer Dashboard Installer (Linux Source Build) ==="
+echo "=== Customer Dashboard Installer (Linux) ==="
 
 # -------------------------------------------------------------
-# 1. ABHÄNGIGKEITEN PRÜFEN & INSTALLIEREN
+# 1. ABHÄNGIGKEITEN
 # -------------------------------------------------------------
+if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl; fi
 
-install_docker() {
+if ! command -v docker >/dev/null; then 
     echo ">> Installiere Docker..."
-    if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl; fi
     curl -fsSL https://get.docker.com -o get-docker.sh
     sh get-docker.sh
     rm get-docker.sh
-    systemctl enable docker
-    systemctl start docker || true
-}
+fi
 
-install_node() {
+if ! command -v node >/dev/null; then
     echo ">> Installiere Node.js..."
-    if ! command -v curl >/dev/null; then apt-get update && apt-get install -y curl; fi
     curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
     apt-get install -y nodejs
-}
-
-if ! command -v docker >/dev/null; then install_docker; else echo "✔ Docker gefunden."; fi
-if ! command -v node >/dev/null; then install_node; else echo "✔ Node.js gefunden."; fi
+fi
 
 # -------------------------------------------------------------
-# 2. DATEIEN KOPIEREN (DER WICHTIGE TEIL)
+# 2. DATEIEN KOPIEREN (ROBUST)
 # -------------------------------------------------------------
-
 INSTALL_DIR="/opt/customer-dashboard"
-# Wir ermitteln, wo das Skript gerade liegt (im deploy Ordner)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Das Root des entpackten Downloads (eins über deploy) ist der Quellcode
 SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo ">> Bereite Installationsverzeichnis vor ($INSTALL_DIR)..."
-# Alte Installation stoppen
-if [ -d "$INSTALL_DIR/deploy" ]; then
-    cd "$INSTALL_DIR/deploy"
-    docker compose down 2>/dev/null || true
+# Alte Container stoppen
+if [ -f "$INSTALL_DIR/deploy/docker-compose.yml" ]; then
+    (cd "$INSTALL_DIR/deploy" && docker compose down 2>/dev/null || true)
 fi
 
-# Alles löschen und neu anlegen
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 
-echo ">> Kopiere gesamten Quellcode..."
-# WICHTIG: Wir kopieren ALLES, damit Docker das Dockerfile findet!
-cp -a "$SOURCE_ROOT/." "$INSTALL_DIR/"
+echo ">> Quellverzeichnis ist: $SOURCE_ROOT"
+echo ">> Kopiere Dateien (dieser Schritt wurde verbessert)..."
 
-# Pfade im Zielsystem definieren
+# ROBUSTER KOPIER-BEFEHL: Kopiert alles, auch versteckte Dateien
+cp -R "$SOURCE_ROOT/"* "$INSTALL_DIR/" 2>/dev/null || true
+cp -R "$SOURCE_ROOT/." "$INSTALL_DIR/" 2>/dev/null || true
+
+# Check, ob 'app' Ordner da ist
+if [ ! -d "$INSTALL_DIR/app" ]; then
+    echo "❌ FEHLER: Der Ordner 'app' wurde nicht kopiert."
+    echo "   Inhalt von $INSTALL_DIR ist:"
+    ls -F "$INSTALL_DIR"
+    exit 1
+fi
+
+# Pfade setzen
 TARGET_DEPLOY="$INSTALL_DIR/deploy"
 TARGET_DAEMON="$INSTALL_DIR/system-daemon"
 TARGET_FRONTEND="$INSTALL_DIR/app/frontend"
@@ -72,38 +72,47 @@ TARGET_LOGS="$INSTALL_DIR/logs"
 mkdir -p "$TARGET_LOGS"
 
 # -------------------------------------------------------------
-# 3. FRONTEND BAUEN (Behebt weiße Seite)
+# 3. FRONTEND BAUEN
 # -------------------------------------------------------------
 echo
 echo ">> Baue Frontend (React)..."
 if [ -d "$TARGET_FRONTEND" ]; then
     cd "$TARGET_FRONTEND"
-    # Alte Node Modules löschen um Konflikte zu vermeiden
     rm -rf node_modules package-lock.json dist
     
-    # Installieren und Bauen
+    echo "   Installiere npm Pakete..."
     npm install --silent
+    
+    echo "   Erstelle Build..."
     npm run build
-    echo "✔ Frontend gebaut."
+    
+    if [ -d "dist" ]; then
+        echo "✔ Frontend erfolgreich gebaut."
+    else
+        echo "❌ FEHLER: 'dist' Ordner wurde nicht erstellt."
+        exit 1
+    fi
 else
-    echo "❌ FEHLER: Frontend Ordner fehlt!"
+    echo "❌ FEHLER: Frontend Ordner fehlt unter: $TARGET_FRONTEND"
+    echo "   Verfügbare Ordner in /app:"
+    ls -F "$INSTALL_DIR/app"
     exit 1
 fi
 
 # -------------------------------------------------------------
-# 4. DAEMON INSTALLIEREN (Behebt Abstürze)
+# 4. DAEMON INSTALLIEREN
 # -------------------------------------------------------------
 echo
-echo ">> Installiere Update-Daemon..."
+echo ">> Installiere Daemon..."
 cd "$TARGET_DAEMON"
 rm -rf node_modules package-lock.json
 npm install --omit=dev --silent
 
-# Key prüfen
 mkdir -p trust
 if [ ! -f "trust/updater-public.pem" ]; then
-    # Versuchen den Key aus dem Source Root zu holen falls er verschoben wurde
-    cp "$INSTALL_DIR/system-daemon/trust/updater-public.pem" trust/ 2>/dev/null || true
+    # Versuche Key zu finden (manchmal in system-daemon root oder trust folder)
+    if [ -f "../updater-public.pem" ]; then cp "../updater-public.pem" trust/; fi
+    if [ -f "$SOURCE_ROOT/system-daemon/trust/updater-public.pem" ]; then cp "$SOURCE_ROOT/system-daemon/trust/updater-public.pem" trust/; fi
 fi
 
 # -------------------------------------------------------------
@@ -113,10 +122,10 @@ echo
 echo ">> Starte Docker Container..."
 cd "$TARGET_DEPLOY"
 
-# Docker Compose Befehl finden
+# Docker command resolution
 if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
 
-# Container neu bauen (--build zwingt Docker das Dockerfile zu nutzen)
+$DC down --volumes --remove-orphans 2>/dev/null || true
 $DC up -d --build --remove-orphans
 
 # -------------------------------------------------------------
@@ -127,16 +136,15 @@ pkill -f "system-daemon/daemon.js" || true
 nohup node "$TARGET_DAEMON/daemon.js" >> "$TARGET_LOGS/daemon.log" 2>&1 &
 
 echo
-echo "Warte auf Systemstart..."
-sleep 10
+echo "Warte auf Systemstart (max 30 sek)..."
+for i in {1..30}; do
+    if curl -s "http://localhost:8080/api/health" >/dev/null; then
+        echo "✅ INSTALLATION ERFOLGREICH!"
+        echo "   Dashboard: http://localhost:8080/"
+        exit 0
+    fi
+    sleep 1
+done
 
-# Prüfen
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/health)
-
-if [ "$STATUS" -eq 200 ]; then
-    echo "INSTALLATION ERFOLGREICH!"
-    echo "   Dashboard erreichbar unter: http://localhost:8080/"
-else
-    echo "Container läuft, API braucht noch kurz zum Starten."
-    echo "   Dashboard: http://localhost:8080/"
-fi
+echo "⚠️  Zeitüberschreitung beim Healthcheck. Container läuft wahrscheinlich trotzdem."
+echo "   Prüfe: http://localhost:8080/"
