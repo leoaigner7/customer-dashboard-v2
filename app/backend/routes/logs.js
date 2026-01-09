@@ -4,7 +4,7 @@ const db = require("../db");
 const router = express.Router();
 
 // GET /api/logs
-router.get("/", async (req, res) => {
+router.get("/",  (req, res) => {
   try {
     const { limit = 200, level, since } = req.query;
 
@@ -17,13 +17,20 @@ router.get("/", async (req, res) => {
     }
 
     if (since) {
+      if (typeof since !== "string") {
+        return res.status(400).json({ error: "since muss ein String sein" });
+      }
       query += level ? " AND created_at > ?" : " WHERE created_at > ?";
       params.push(since);
     }
 
     query += " ORDER BY created_at DESC LIMIT ?";
-    params.push(parseInt(limit, 10));
+    const rawLimit = parseInt(limit, 10);
+    const safeLimit = Number.isFinite(rawLimit)
+      ? Math.min(Math.max(rawLimit, 1), 500)
+      : 200;
 
+    params.push(safeLimit);
     const rows = db.prepare(query).all(...params);
     res.json(rows);
   } catch (err) {
@@ -36,14 +43,19 @@ router.post("/", (req, res) => {
   try {
     const { level = "info", message } = req.body;
 
-    if (!message) {
+
+  if (typeof message !== "string" || message.trim().length === 0) {
       return res.status(400).json({ error: "message fehlt" });
     }
+
+    const allowedLevels = new Set(["debug", "info", "warn", "error"]);
+    const safeLevel = allowedLevels.has(level) ? level : "info";
+    const safeMessage = message.trim().slice(0, 2000);
 
     db.prepare(
       `INSERT INTO logs (level, message, created_at)
        VALUES (?, ?, datetime('now'))`
-    ).run(level, message);
+    ).run(safelevel, safemessage);
 
     res.json({ status: "ok" });
   } catch (err) {

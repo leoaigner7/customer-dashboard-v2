@@ -171,6 +171,56 @@ async function downloadImage(config, version) {
 
   return image;
 }
+/**
+ * Stoppt das Dashboard via docker compose down (OHNE -v!)
+ * Wichtig: -v darf NICHT verwendet werden (würde Volumes löschen -> Datenverlust).
+ */
+async function stopDashboard(config) {
+  const composeFile = config.target.composeFile;
+
+  log("info", "Stoppe Dashboard (docker compose down)", config, { composeFile });
+
+  await runCommand(
+    "docker",
+    ["compose", "-f", composeFile, "down"],
+    {},
+    config
+  );
+}
+
+/**
+ * Startet das Dashboard via docker compose up -d
+ */
+async function startDashboard(config) {
+  const composeFile = config.target.composeFile;
+
+  log("info", "Starte Dashboard (docker compose up -d)", config, { composeFile });
+
+  await runCommand(
+    "docker",
+    ["compose", "-f", composeFile, "up", "-d"],
+    {},
+    config
+  );
+}
+
+/**
+ * Optional: zieht die Images neu (docker compose pull)
+ * (Wird bei ZIP-Update nicht zwingend gebraucht, aber sauber für Symmetrie.)
+ */
+async function pullDashboard(config) {
+  const composeFile = config.target.composeFile;
+
+  log("info", "Ziehe Dashboard Images (docker compose pull)", config, { composeFile });
+
+  await runCommand(
+    "docker",
+    ["compose", "-f", composeFile, "pull"],
+    {},
+    config
+  );
+}
+
 
 /**
  * Startet das Dashboard via docker compose neu:
@@ -304,6 +354,9 @@ module.exports = {
   writeEnvVersion,
   downloadImage,
   restartDashboard,
+  stopDashboard,
+  startDashboard,
+  pullDashboard,
   checkHealth,
   runCommand, // optional, falls du es später im Daemon nutzen möchtest
 };

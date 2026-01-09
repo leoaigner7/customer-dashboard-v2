@@ -43,20 +43,26 @@ CREATE TABLE IF NOT EXISTS update_history (
 `);
 
 // Seed-Admin erzeugen, wenn noch keiner existiert
-const adminExists = db
-  .prepare("SELECT COUNT(*) AS count FROM users WHERE role='admin'")
-  .get().count;
+// Seed-Admin nur, wenn explizit erlaubt (Fail-secure Default)
+const ALLOW_SEED_ADMIN = process.env.ALLOW_SEED_ADMIN === "true";
 
-if (!adminExists) {
-  const bcrypt = require("bcryptjs");
-  const password = bcrypt.hashSync("admin123", 10);
+if (ALLOW_SEED_ADMIN) {
+  const adminExists = db
+    .prepare("SELECT COUNT(*) AS count FROM users WHERE role='admin'")
+    .get().count;
 
-  db.prepare(
-    `INSERT INTO users (email, password_hash, role)
-     VALUES ('admin@example.com', ?, 'admin')`
-  ).run(password);
+  if (!adminExists) {
+    const bcrypt = require("bcryptjs");
+    const password = bcrypt.hashSync("admin123", 10);
 
-  console.log("Seed-Admin erzeugt: admin@example.com / admin123");
+    db.prepare(
+      `INSERT INTO users (email, password_hash, role)
+       VALUES ('admin@example.com', ?, 'admin')`
+    ).run(password);
+
+    console.log("[SEED] Admin erzeugt: admin@example.com / admin123 (ALLOW_SEED_ADMIN=true)");
+  }
 }
+
 
 module.exports = db;

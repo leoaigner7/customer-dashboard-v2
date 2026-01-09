@@ -2,8 +2,13 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const db = require("./db");
 
-const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
-const TOKEN_EXPIRES = "8h";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is required. Refusing to start without a secret.");
+}
+
+const TOKEN_EXPIRES = process.env.JWT_EXPIRES_IN || "8h";
+
 
 function signUser(user) {
   return jwt.sign(
@@ -36,15 +41,19 @@ function authMiddleware(requiredRole = null) {
       }
 
       next();
-    } catch {
-      return res.status(401).json({ error: "Ungültiger Token" });
-    }
+  } catch (err) {
+  return res.status(401).json({ error: "Ungültiger Token" });
+}
   };
 }
 
 // LOGIN ENDPOINT — wird jetzt in server.js eingebunden
 async function handleLogin(req, res) {
-  const { email, password } = req.body;
+  const { email, password } = req.body || {};
+
+  if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
+    return res.status(400).json({ error: "Email und Passwort erforderlich" });
+  }
 
   try {
     const user = db

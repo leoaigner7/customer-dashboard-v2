@@ -6,6 +6,8 @@ process.chdir(__dirname);
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+
 // system-daemon/daemon.js
 
 /********************************************************************
@@ -23,6 +25,46 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const AdmZip = require("adm-zip");
+function rmDirRetry(dir, tries = 15, delayMs = 250) {
+  let last = null;
+  for (let i = 0; i < tries; i++) {
+    try {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+      return;
+    } catch (err) {
+      last = err;
+      if (err.code === "EPERM" || err.code === "EBUSY") {
+        // Windows File Lock – kurz warten und erneut versuchen
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+        delayMs = Math.min(Math.floor(delayMs * 1.4), 3000);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw last || new Error("rmDirRetry failed");
+}
+
+function renameRetry(from, to, tries = 15, delayMs = 250) {
+  let last = null;
+  for (let i = 0; i < tries; i++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (err) {
+      last = err;
+      if (err.code === "EPERM" || err.code === "EBUSY") {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+        delayMs = Math.min(Math.floor(delayMs * 1.4), 3000);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw last || new Error("renameRetry failed");
+}
 
 const target = require("./targets/docker-dashboard");
 const security = require("./security");
@@ -475,6 +517,32 @@ async function applyDockerUpdate(candidate, latestVersion) {
     durationMs,
   });
 }
+function safeExtractZip(zipPath, targetDir) {
+  const zip = new AdmZip(zipPath);
+  const entries = zip.getEntries();
+
+  const root = path.resolve(targetDir) + path.sep;
+
+  for (const e of entries) {
+    // unify separators to prevent weird Windows cases
+    const name = e.entryName.replace(/\\/g, "/");
+
+    // IMPORTANT: resolve against targetDir and ensure we stay inside root
+    const outPath = path.resolve(targetDir, name);
+
+    if (!outPath.startsWith(root)) {
+      throw new Error(`ZipSlip detected: ${e.entryName}`);
+    }
+
+    if (e.isDirectory) {
+      fs.mkdirSync(outPath, { recursive: true });
+      continue;
+    }
+
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, e.getData());
+  }
+}
 
 // ------------------------------------------------------------
 // HAUPT-UPDATE-LOGIK
@@ -596,37 +664,50 @@ async function checkOnce() {
     log("info", "Signaturprüfung erfolgreich.");
   }
 
-  // -----------------------------
-  // ZIP INSTALLATION (ATOMIC SWAP)
-  // -----------------------------
-  log("info", "Entpacke ZIP in Staging-Verzeichnis", { stagingDir });
+// -----------------------------
+// ZIP INSTALLATION (SAFE EXTRACT + ATOMIC SWAP)
+// -----------------------------
+log("info", "Entpacke ZIP sicher (ZipSlip Schutz)", { stagingDir });
 
-  const zip = new AdmZip(stableZip);
-  zip.extractAllTo(stagingDir, true);
+const extractDir = path.join(stagingDir, "extract");
+fs.mkdirSync(extractDir, { recursive: true });
 
-  const newDeploy = path.join(stagingDir, "deploy");
-  const deployTarget = path.join(installRoot, "deploy");
+// SAFE statt extractAllTo()
+safeExtractZip(stableZip, extractDir);
 
-  if (!fs.existsSync(newDeploy)) {
-    throw new Error("ZIP enthält kein deploy-Verzeichnis.");
-  }
+const newDeploy = path.join(extractDir, "deploy");
+const deployTarget = path.join(installRoot, "deploy");
 
-  log("info", "Atomic Swap: deploy-Verzeichnis wird ersetzt");
+if (!fs.existsSync(newDeploy)) {
+  throw new Error("ZIP enthält kein deploy-Verzeichnis.");
+}
 
-  fs.rmSync(deployTarget, { recursive: true, force: true });
-  fs.renameSync(newDeploy, deployTarget);
 
-  // Version setzen
-  target.writeEnvVersion(config, candidate.version);
+  log("info", "Stoppe Docker vor Atomic Swap (Windows File Locks vermeiden)");
 
-  // Neustart
-  await target.restartDashboard(config);
+// 1) Docker DOWN (ohne -v!)
+await target.stopDashboard(config);
 
-  // Healthcheck
-  const ok = await target.checkHealth(config, 45, 2000);
-  if (!ok) {
-    throw new Error("Healthcheck nach ZIP-Update fehlgeschlagen.");
-  }
+log("info", "Atomic Swap: deploy-Verzeichnis wird ersetzt (mit Retry)");
+
+// 2) Swap: erst löschen, dann umbenennen – beides mit Retry
+rmDirRetry(deployTarget);
+renameRetry(newDeploy, deployTarget);
+
+fs.mkdirSync(path.join(deployTarget, "data"), { recursive: true });
+fs.mkdirSync(path.join(deployTarget, "logs"), { recursive: true });
+
+// Version setzen
+target.writeEnvVersion(config, candidate.version);
+
+// 3) Docker UP
+await target.startDashboard(config);
+
+// 4) Healthcheck
+const ok = await target.checkHealth(config, 45, 2000);
+if (!ok) {
+  throw new Error("Healthcheck nach ZIP-Update fehlgeschlagen.");
+}
 
   log("info", "ZIP-Update erfolgreich installiert", {
     version: candidate.version,
@@ -659,8 +740,13 @@ async function checkOnce() {
         });
 
         try {
+          await target.stopDashboard(config);
           await restoreBackup(backupDir);
-          await target.restartDashboard(config);
+          await target.startDashboard(config);
+          const okRb = await target.checkHealth(config, 45, 2000);
+          if (!okRb) {
+           throw new Error("Rollback durchgeführt, aber Healthcheck ist weiterhin rot.");
+        }
 
           writeStatus({
             currentVersion,

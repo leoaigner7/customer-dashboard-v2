@@ -48,7 +48,17 @@ Write-Host "Kopiere Dateien..."
 Copy-Item -Recurse -Force "..\deploy\*"        $DeployDir
 Copy-Item -Recurse -Force "..\system-daemon\*" $DaemonDir
 # -------------------------------------------------------------
-# 3.1 INSTALL TRUSTED PUBLIC KEY (SIGNATURE VERIFICATION)
+# 3.1 DEPLOY-PERSISTENZORDNER (Docker Volumes)
+# -------------------------------------------------------------
+$DeployDataDir = Join-Path $DeployDir "data"
+$DeployLogsDir = Join-Path $DeployDir "logs"
+
+Write-Host "Erzeuge Deploy-Persistenzordner (data, logs)..."
+New-Item -ItemType Directory -Force -Path $DeployDataDir | Out-Null
+New-Item -ItemType Directory -Force -Path $DeployLogsDir | Out-Null
+
+# -------------------------------------------------------------
+# 3.2 INSTALL TRUSTED PUBLIC KEY (SIGNATURE VERIFICATION)
 # -------------------------------------------------------------
 Write-Host "Installiere Update-Signatur (Public Key)..."
 
@@ -71,6 +81,96 @@ if (-not (Test-Path $TargetPublicKey)) {
 }
 
 Write-Host "Public Key erfolgreich installiert."
+# -------------------------------------------------------------
+# 3.3 LEAST PRIVILEGE: Service-User anlegen + Rechte + docker-users
+# -------------------------------------------------------------
+$SvcUser = "CustomerDashboardSvc"
+$SvcUserFull = "$env:COMPUTERNAME\$SvcUser"
+
+# zufälliges Passwort (nur für Task/RunAs benötigt)
+Add-Type -AssemblyName System.Web
+$SvcPassPlain = [System.Web.Security.Membership]::GeneratePassword(32, 6)
+$SvcPass = ConvertTo-SecureString $SvcPassPlain -AsPlainText -Force
+
+# User anlegen, falls nicht vorhanden
+if (Get-LocalUser -Name $SvcUser -ErrorAction SilentlyContinue) {
+    Set-LocalUser -Name $SvcUser -Password $SvcPass
+} else {
+    New-LocalUser `
+        -Name $SvcUser `
+        -Password $SvcPass `
+        -FullName "Customer Dashboard Service User" `
+        -Description "Least-privilege user for Customer Dashboard" `
+        -PasswordNeverExpires `
+        -AccountNeverExpires | Out-Null
+}
+
+# Ordnerrechte (Modify reicht i.d.R.)
+# Ordnerrechte (Modify reicht i.d.R.)
+icacls $InstallDir /grant "${SvcUserFull}:(OI)(CI)M" /T | Out-Null
+icacls $LogDir     /grant "${SvcUserFull}:(OI)(CI)M" /T | Out-Null
+icacls $DeployDir  /grant "${SvcUserFull}:(OI)(CI)M" /T | Out-Null
+icacls $DaemonDir  /grant "${SvcUserFull}:(OI)(CI)M" /T | Out-Null
+
+
+# Docker Desktop: Zugriff auf Docker Engine via Gruppe docker-users
+try {
+    Add-LocalGroupMember -Group "docker-users" -Member $SvcUser -ErrorAction Stop
+} catch {
+    Write-Warning "Konnte '$SvcUser' nicht zur Gruppe 'docker-users' hinzufügen. Prüfe Docker Desktop / Gruppenname."
+}
+# -------------------------------------------------------------
+# 3.4 AUTOSTART: Scheduled Task (At Startup) unter Service-User
+# -------------------------------------------------------------
+$TaskName = "CustomerDashboardDaemon"
+
+if (Get-LocalUser -Name $SvcUser -ErrorAction SilentlyContinue) {
+    Set-LocalUser -Name $SvcUser -Password $SvcPass
+}
+
+# Vorhandenen Task ggf. ersetzen
+try {
+  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+} catch { }
+# Task Action: node.exe daemon.js
+$Action  = New-ScheduledTaskAction `
+  -Execute $NodeExe `
+  -Argument "`"$DaemonJs`""
+  -WorkingDirectory $DaemonDir
+
+# Trigger: beim Systemstart (läuft auch ohne Login)
+$Trigger = New-ScheduledTaskTrigger -AtStartup
+
+# Settings: robust, restart on failure
+$Settings = New-ScheduledTaskSettingsSet `
+  -StartWhenAvailable `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries `
+  -RestartCount 999 `
+  -RestartInterval (New-TimeSpan -Minutes 1) `
+  -MultipleInstances IgnoreNew
+
+# Principal: Least Privilege, KEIN Highest
+$Principal = New-ScheduledTaskPrincipal `
+  -UserId $SvcUserFull `
+  -LogonType Password `
+  -RunLevel Limited
+
+# Vorhandenen Task ggf. ersetzen
+try {
+  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+} catch { }
+
+Register-ScheduledTask `
+  -TaskName $TaskName `
+  -Action $Action `
+  -Trigger $Trigger `
+  -Settings $Settings `
+  -Principal $Principal `
+  -Password $SvcPassPlain `
+  -Force | Out-Null
+
+Write-Host "Scheduled Task '$TaskName' erstellt (AtStartup) unter $SvcUserFull." -ForegroundColor Green
 
 # -------------------------------------------------------------
 # 4. DOCKER
@@ -107,20 +207,18 @@ if ($ok) {
 } else {
     Write-Host "WARNUNG: Dashboard antwortet nicht, fahre fort." -ForegroundColor Yellow
 }
-
 # -------------------------------------------------------------
-# 6. START NODE DAEMON (EXAKT WIE MANUELL)
+# 6. START DAEMON via Scheduled Task
 # -------------------------------------------------------------
-Write-Host "Starte Auto-Update-Daemon (identisch zu manuell)..."
+Write-Host "Starte Auto-Update-Daemon via Scheduled Task..."
+Start-ScheduledTask -TaskName $TaskName
+Start-Sleep 3
 
-Start-Process `
-    -FilePath $NodeExe `
-    -ArgumentList $DaemonJs `
-    -WorkingDirectory $DaemonDir `
-    -WindowStyle Hidden
+$info = Get-ScheduledTaskInfo -TaskName $TaskName
+Write-Host "Task State: $($info.State), LastResult: $($info.LastTaskResult)"
 
-Start-Sleep 2
 
+# Prüfen, ob node läuft (optional)
 if (-not (Get-Process node -ErrorAction SilentlyContinue)) {
     Write-Error "Node-Daemon konnte nicht gestartet werden."
     exit 1
