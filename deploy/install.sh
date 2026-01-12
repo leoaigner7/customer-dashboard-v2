@@ -96,7 +96,20 @@ if [ ! -f "$ENV_FILE" ]; then
     else
         sudo touch "$ENV_FILE"
     fi
+fi  # <--- WICHTIG: Das 'fi' muss HIER stehen!
+
+# --- AUTOKORREKTUR START ---
+# Repariert den spezifischen Fehler, falls "APP_VERSION" an das Passwort geklebt wurde
+# (Dies muss AUCH laufen, wenn die Datei schon existiert!)
+if [ -f "$ENV_FILE" ]; then
+    # Ersetzt "irgendwasAPP_VERSION=" durch "irgendwas" + Zeilenumbruch + "APP_VERSION="
+    sudo sed -i 's/APP_VERSION=/\nAPP_VERSION=/g' "$ENV_FILE"
+    
+    # Entfernt doppelte Leerzeilen, die dadurch entstanden sein könnten
+    sudo sed -i '/^$/N;/^\n$/D' "$ENV_FILE"
 fi
+# --- AUTOKORREKTUR ENDE ---
+
 
 # Sicherstellen, dass .env sauber endet, bevor wir schreiben
 ensure_final_newline "$ENV_FILE"
