@@ -73,8 +73,11 @@ jobs:
 
       - name: Test Docker Image
         run: |
-          docker run -d -p 8088:3000 --name cd-test $REGISTRY/${IMAGE_NAME}:$VERSION
-
+          docker run -d -p 8088:3000 \
+            -e JWT_SECRET="ci-test-secret-123" \
+            -e NODE_ENV="production" \
+            --name cd-test \
+            $REGISTRY/${IMAGE_NAME}:$VERSION
           echo "Waiting for container to be ready..."
           for i in {1..15}; do
             sleep 2
