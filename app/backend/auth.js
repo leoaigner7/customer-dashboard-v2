@@ -2,10 +2,32 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const db = require("./db");
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET is required. Refusing to start without a secret.");
+const jwt = require("jsonwebtoken");
+const { jwtSecret } = require("./auth");
+const crypto = require("crypto");
+
+let jwtSecret = process.env.JWT_SECRET;
+
+// Nur für DEV / CI automatisch erlauben
+if (!jwtSecret) {
+  if (
+    process.env.NODE_ENV === "development" ||
+    process.env.NODE_ENV === "test" ||
+    process.env.CI === "true"
+  ) {
+    jwtSecret = crypto.randomBytes(32).toString("hex");
+    console.warn("[WARN] JWT_SECRET not set – using ephemeral secret (dev/ci only)");
+  } else {
+    throw new Error(
+      "JWT_SECRET is required. Refusing to start without a secret."
+    );
+  }
 }
+
+module.exports = {
+  jwtSecret,
+};
+
 
 const TOKEN_EXPIRES = process.env.JWT_EXPIRES_IN || "8h";
 
