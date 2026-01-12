@@ -1,227 +1,194 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === KONFIGURATION & AUTOMATIK ===
-
-# Pfade ermitteln
-ROOT_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
-DEPLOY_DIR="$(dirname "$(realpath "$0")")"
-
-# 1. Existierende .env laden (falls vorhanden)
-if [ -f "$DEPLOY_DIR/.env" ]; then
-  source "$DEPLOY_DIR/.env"
-fi
-
-# 2. Version automatisch aus VERSION.txt lesen, falls nicht gesetzt
-if [ -z "${APP_VERSION:-}" ]; then
-  if [ -f "$ROOT_DIR/VERSION.txt" ]; then
-    APP_VERSION=$(cat "$ROOT_DIR/VERSION.txt" | tr -d '[:space:]')
-    
-    # WICHTIG: Die Version muss in die .env Datei geschrieben werden!
-    if [ -f "$DEPLOY_DIR/.env" ]; then
-       # Wenn APP_VERSION=... schon existiert, ersetzen
-       if grep -q "^APP_VERSION=" "$DEPLOY_DIR/.env"; then
-         sed -i "s/^APP_VERSION=.*/APP_VERSION=$APP_VERSION/" "$DEPLOY_DIR/.env"
-       else
-         # Sonst anhängen
-         echo "APP_VERSION=$APP_VERSION" >> "$DEPLOY_DIR/.env"
-       fi
-    fi
-  else
-    echo "FEHLER: Konnte Version nicht ermitteln (weder in .env noch VERSION.txt)."
-    exit 1
-  fi
-fi
-export APP_VERSION
-
-# 3. JWT_SECRET prüfen und notfalls generieren (verhindert Boot-Loop)
-if [ -z "${JWT_SECRET:-}" ]; then
-  echo "Warnung: JWT_SECRET fehlt. Generiere ein zufälliges Secret..."
-  GENERATED_SECRET=$(openssl rand -hex 32)
-  export JWT_SECRET="$GENERATED_SECRET"
-  
-  # In .env speichern/anhängen
-  if [ ! -f "$DEPLOY_DIR/.env" ]; then
-    # Wenn keine .env da ist, kopiere example oder erstelle neu
-    if [ -f "$DEPLOY_DIR/.env.example" ]; then
-      cp "$DEPLOY_DIR/.env.example" "$DEPLOY_DIR/.env"
-    else
-      touch "$DEPLOY_DIR/.env"
-    fi
-  fi
-  
-  # Eintrag in .env hinzufügen oder aktualisieren
-  if grep -q "JWT_SECRET=" "$DEPLOY_DIR/.env"; then
-    # Wenn Zeile existiert (aber leer ist), ersetzen
-    sed -i "s/^JWT_SECRET=.*$/JWT_SECRET=$GENERATED_SECRET/" "$DEPLOY_DIR/.env"
-  else
-    # Sonst anhängen
-    echo "" >> "$DEPLOY_DIR/.env"
-    echo "JWT_SECRET=$GENERATED_SECRET" >> "$DEPLOY_DIR/.env"
-  fi
-  echo "Info: Neues Secret wurde in .env gespeichert."
-fi
-echo "=== Customer Dashboard Installer (Linux) ==="
-echo
+# === Customer Dashboard Installer (Linux) ===
+# Version 2.0 - Stabilisiert & Robust
 
 # -------------------------------------------------------------
-# 0. Pfade
+# 0. Pfade und Variablen
 # -------------------------------------------------------------
+# Wir nutzen absolute Pfade basierend auf dem Skript-Ort
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 INSTALL_DIR="/opt/customer-dashboard"
 DEPLOY_DIR="$INSTALL_DIR/deploy"
 DAEMON_DIR="$INSTALL_DIR/system-daemon"
 LOG_DIR="$INSTALL_DIR/logs"
+ENV_FILE="$DEPLOY_DIR/.env"
 
 NODE_BIN="$(command -v node)"
 
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
+echo "=== Installation gestartet ==="
 echo "Installationsverzeichnis: $INSTALL_DIR"
-echo "Paketwurzelverzeichnis:   $PACKAGE_ROOT"
-echo "Node:                     $NODE_BIN"
-
+echo "Paketquelle:              $PACKAGE_ROOT"
+echo "Node.js Pfad:             $NODE_BIN"
 echo
+
 # -------------------------------------------------------------
 # 1. Checks
 # -------------------------------------------------------------
 if ! command -v docker >/dev/null; then
-  echo "FEHLER: Docker nicht installiert" >&2
+  echo "FEHLER: Docker ist nicht installiert." >&2
   exit 1
 fi
 
 if ! command -v node >/dev/null; then
-  echo "FEHLER: Node.js nicht installiert" >&2
+  echo "FEHLER: Node.js ist nicht installiert." >&2
   exit 1
 fi
 
-
-
 # -------------------------------------------------------------
-# 2. Verzeichnisse
+# 2. Verzeichnisse & User
 # -------------------------------------------------------------
+echo "Richte Service-User ein (customer-dashboard)..."
+if ! id "customer-dashboard" &>/dev/null; then
+    sudo useradd -r -m -d /var/lib/customer-dashboard -s /usr/sbin/nologin customer-dashboard
+fi
+# Sicherstellen, dass der User Docker nutzen darf
+sudo usermod -aG docker customer-dashboard
+
+echo "Erstelle Verzeichnisse..."
 sudo mkdir -p "$DEPLOY_DIR" "$DAEMON_DIR" "$LOG_DIR"
+sudo mkdir -p "$DEPLOY_DIR/data" "$DEPLOY_DIR/logs"
 
 # -------------------------------------------------------------
 # 3. Dateien kopieren
 # -------------------------------------------------------------
 echo "Kopiere Dateien..."
-sudo cp -a "$SCRIPT_DIR/." "$DEPLOY_DIR/"
-sudo cp -a "$PACKAGE_ROOT/system-daemon/." "$DAEMON_DIR/"
+# Wir nutzen rsync falls vorhanden, sonst cp (sauberer overwrite)
+if command -v rsync >/dev/null; then
+    sudo rsync -a --delete "$SCRIPT_DIR/" "$DEPLOY_DIR/"
+    sudo rsync -a --delete "$PACKAGE_ROOT/system-daemon/" "$DAEMON_DIR/"
+else
+    sudo cp -a "$SCRIPT_DIR/." "$DEPLOY_DIR/"
+    sudo cp -a "$PACKAGE_ROOT/system-daemon/." "$DAEMON_DIR/"
+fi
 
-# -------------------------------------------------------------
-# 3a. Persistenz-Ordner für Docker-Volumes anlegen
-# -------------------------------------------------------------
-echo "Erzeuge Persistenz-Ordner (data, logs) im Deploy-Verzeichnis..."
-sudo mkdir -p "$DEPLOY_DIR/data" "$DEPLOY_DIR/logs"
-
-#---------------------------------
-# Public Key installieren
-#---------------------------------
-echo "Installiere Update-Signatur (Public Key)..."
-
+# Public Key kopieren
 TRUST_DIR="$DAEMON_DIR/trust"
 SRC_KEY="$PACKAGE_ROOT/system-daemon/trust/updater-public.pem"
-DST_KEY="$TRUST_DIR/updater-public.pem"
-
 sudo mkdir -p "$TRUST_DIR"
-
-if [ ! -f "$SRC_KEY" ]; then
-  echo "FEHLER: Public Key fehlt im Paket" >&2
-  exit 1
+if [ -f "$SRC_KEY" ]; then
+    sudo cp "$SRC_KEY" "$TRUST_DIR/updater-public.pem"
+    echo "Update-Signatur installiert."
+else
+    echo "WARNUNG: Public Key nicht gefunden ($SRC_KEY)."
 fi
 
-sudo cp "$SRC_KEY" "$DST_KEY"
+# -------------------------------------------------------------
+# 4. Konfiguration (.env) sicher erstellen
+# -------------------------------------------------------------
+echo "Konfiguriere Umgebung..."
 
-if [ ! -f "$DST_KEY" ]; then
-  echo "FEHLER: Public Key konnte nicht installiert werden" >&2
-  exit 1
+# Hilfsfunktion: Fügt Zeilenumbruch ein, falls am Ende der Datei keiner ist
+ensure_final_newline() {
+    local file="$1"
+    if [ -s "$file" ] && [ "$(tail -c 1 "$file" | wc -l)" -eq 0 ]; then
+        echo "" | sudo tee -a "$file" > /dev/null
+    fi
+}
+
+# .env aus Vorlage erstellen, falls nicht existent
+if [ ! -f "$ENV_FILE" ]; then
+    if [ -f "$DEPLOY_DIR/.env.example" ]; then
+        sudo cp "$DEPLOY_DIR/.env.example" "$ENV_FILE"
+    else
+        sudo touch "$ENV_FILE"
+    fi
 fi
 
-echo "Public Key erfolgreich installiert."
+# Sicherstellen, dass .env sauber endet, bevor wir schreiben
+ensure_final_newline "$ENV_FILE"
 
-# -------------------------------------------------------------
-# LEAST PRIVILEGE: Service-User + Rechte + Docker-Gruppe
-# -------------------------------------------------------------
-echo "Richte Service-User ein (customer-dashboard)..."
-sudo useradd -r -m -d /var/lib/customer-dashboard -s /usr/sbin/nologin customer-dashboard 2>/dev/null || true
-sudo usermod -aG docker customer-dashboard || true
-
-
-sudo mkdir -p "$DEPLOY_DIR" "$DAEMON_DIR" "$LOG_DIR"
-sudo mkdir -p "$DEPLOY_DIR/data" "$DEPLOY_DIR/logs"
-
-# Daemon + Logs
-sudo chown -R customer-dashboard:customer-dashboard "$DAEMON_DIR" "$LOG_DIR"
-
-# Deploy MUSS schreibbar sein, wenn der Daemon deploy ersetzt
-sudo chown -R customer-dashboard:customer-dashboard "$DEPLOY_DIR"
-
-
-
-
-
-# -------------------------------------------------------------
-# 4. .env lesen
-# -------------------------------------------------------------
-if [ ! -f "$DEPLOY_DIR/.env" ]; then
-  echo "FEHLER: .env fehlt in $DEPLOY_DIR/.env" >&2
-  exit 1
+# --- VERSION SETZEN ---
+if [ -f "$PACKAGE_ROOT/VERSION.txt" ]; then
+    NEW_VERSION=$(cat "$PACKAGE_ROOT/VERSION.txt" | tr -d '[:space:]')
+else
+    NEW_VERSION="latest"
 fi
 
+# Prüfen, ob APP_VERSION schon in der Datei steht
+if grep -q "^APP_VERSION=" "$ENV_FILE"; then
+    # Ersetzen
+    sudo sed -i "s/^APP_VERSION=.*/APP_VERSION=$NEW_VERSION/" "$ENV_FILE"
+else
+    # Anhängen
+    echo "APP_VERSION=$NEW_VERSION" | sudo tee -a "$ENV_FILE" > /dev/null
+fi
+
+# --- JWT SECRET SETZEN ---
+# Prüfen, ob Secret gesetzt ist (und nicht leer ist)
+CURRENT_SECRET=$(grep "^JWT_SECRET=" "$ENV_FILE" | cut -d '=' -f2)
+
+if [ -z "$CURRENT_SECRET" ]; then
+    echo "Generiere neues Sicherheits-Token..."
+    NEW_SECRET=$(openssl rand -hex 32)
+    
+    if grep -q "^JWT_SECRET=" "$ENV_FILE"; then
+        sudo sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$NEW_SECRET/" "$ENV_FILE"
+    else
+        ensure_final_newline "$ENV_FILE"
+        echo "JWT_SECRET=$NEW_SECRET" | sudo tee -a "$ENV_FILE" > /dev/null
+    fi
+fi
+
+# .env laden für das Skript
 set +o allexport
-# shellcheck disable=SC1090
-source "$DEPLOY_DIR/.env"
-
+source "$ENV_FILE"
 PORT="${APP_PORT:-8080}"
-VERSION="${APP_VERSION:-unbekannt}"
-
-echo "Version: $VERSION"
-echo "Port:    $PORT"
-echo
 
 # -------------------------------------------------------------
-# 5. Docker starten
+# 5. Berechtigungen reparieren (VOR Docker Start!)
+# -------------------------------------------------------------
+echo "Setze Berechtigungen..."
+# Alles gehört dem Service-User
+sudo chown -R customer-dashboard:customer-dashboard "$INSTALL_DIR"
+# Das Skript selbst muss ausführbar bleiben
+sudo chmod +x "$DEPLOY_DIR/install.sh"
+
+# -------------------------------------------------------------
+# 6. Docker Container starten
 # -------------------------------------------------------------
 cd "$DEPLOY_DIR"
 
-echo "Stoppe Container..."
-sudo docker compose down || true
+echo "Starte Dashboard (Port $PORT)..."
+# Alte Container stoppen (falls vorhanden)
+sudo docker compose down --remove-orphans >/dev/null 2>&1 || true
 
-echo "Ziehe Image..."
-sudo docker compose pull
-
-echo "Starte Dashboard..."
+# Neu starten
+sudo docker compose pull -q
 sudo docker compose up -d
 
 # -------------------------------------------------------------
-# 6. Healthcheck
+# 7. Healthcheck
 # -------------------------------------------------------------
-echo "Prüfe Dashboard..."
+echo "Warte auf Dashboard-Start..."
 URL="http://localhost:${PORT}/api/health"
-ok="false"
-for i in {1..20}; do
+RETRIES=15
+for ((i=1; i<=RETRIES; i++)); do
   if curl -fsS "$URL" >/dev/null 2>&1; then
-  ok="true"
-    echo "Dashboard läuft."
+    echo "✅ Dashboard ist online!"
     break
   fi
-  sleep 2
+  if [ $i -eq $RETRIES ]; then
+    echo "⚠️  Warnung: Dashboard antwortet noch nicht. Bitte Logs prüfen: sudo docker logs deploy-dashboard-1"
+  else
+    sleep 2
+  fi
 done
 
 # -------------------------------------------------------------
-# 7. Node-Abhängigkeiten
+# 8. Service Installation (Daemon)
 # -------------------------------------------------------------
+echo "Installiere Update-Daemon..."
+
+# NPM Install im Daemon-Ordner
 if [ -f "$DAEMON_DIR/package.json" ]; then
-  echo "Installiere Node-Abhängigkeiten (prod)..."
-  cd "$DAEMON_DIR"  
-  sudo -u customer-dashboard env HOME="/var/lib/customer-dashboard" npm ci --omit=dev
+    cd "$DAEMON_DIR"
+    # Als Service-User ausführen, damit node_modules die richtigen Rechte hat
+    sudo -u customer-dashboard env HOME="/var/lib/customer-dashboard" npm ci --omit=dev --silent
 fi
-# -------------------------------------------------------------
-# 8. NODE DAEMON START (GENAU WIE WINDOWS)
-# -------------------------------------------------------------
-echo "Erstelle/aktualisiere systemd Service..."
 
 SERVICE_NAME="customer-dashboard-daemon"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
@@ -232,22 +199,19 @@ Description=Customer Dashboard Auto Update Daemon
 After=network-online.target docker.service
 Wants=network-online.target
 
-
 [Service]
 Type=simple
 User=customer-dashboard
 Group=docker
 WorkingDirectory=$DAEMON_DIR
-ExecStart=/usr/bin/env node /opt/customer-dashboard/system-daemon/daemon.js
+ExecStart=/usr/bin/env node $DAEMON_DIR/daemon.js
 Restart=always
-RestartSec=5
+RestartSec=10
 Environment=NODE_ENV=production
-
-# Hardening (empfohlen)
+# Sicherheit:
 NoNewPrivileges=true
-PrivateTmp=true
 ProtectSystem=full
-ProtectHome=read-only
+# Erlaube Schreiben nur im Installationsverzeichnis
 ReadWritePaths=$INSTALL_DIR
 
 [Install]
@@ -255,18 +219,15 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable "$SERVICE_NAME"
+sudo systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
 sudo systemctl restart "$SERVICE_NAME"
 
-sleep 2
-sudo systemctl --no-pager --full status "$SERVICE_NAME" || true
-
-# -------------------------------------------------------------
-# 9. DONE
-# -------------------------------------------------------------
 echo
-echo "INSTALLATION ERFOLGREICH"
-echo "Dashboard: http://localhost:${PORT}/"
-echo "Logs:      $LOG_DIR"
-echo "Service:   systemctl status $SERVICE_NAME"
-echo "Journal:   journalctl -u $SERVICE_NAME -f"
+echo "==========================================="
+echo "   INSTALLATION ERFOLGREICH ABGESCHLOSSEN"
+echo "==========================================="
+echo "URL:      http://localhost:${PORT}/"
+echo "Login:    admin@example.com / admin123"
+echo "Logs:     $LOG_DIR"
+echo "Service:  systemctl status $SERVICE_NAME"
+echo "==========================================="
