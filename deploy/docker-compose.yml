@@ -7,7 +7,6 @@ services:
       - DB_PATH=/data/database.db
       # Optional: Statusfile (falls dein Daemon/Backend es nutzt) auch persistieren
       - STATUS_FILE=/logs/update-status.json
-      - JWT_SECRET=${JWT_SECRET:-NotfallGeheimnisFuerDenServer123!}
     ports:
       - "${APP_PORT:-8080}:3000"
     volumes:
