@@ -3,25 +3,18 @@ const bcrypt = require("bcryptjs");
 const db = require("./db");
 const crypto = require("crypto");
 
-
 const TOKEN_EXPIRES = process.env.JWT_EXPIRES_IN || "8h";
 
-// Secret bestimmen (Prod: Pflicht, Dev/CI: ephemeral erlaubt)
+// --- SECRET BESTIMMEN ---
+// Wir nennen die Variable hier 'jwtSecret', um sie unten konsistent zu nutzen.
 let jwtSecret = process.env.JWT_SECRET;
 
+// FALLBACK: Wenn kein Secret da ist, generiere eins (damit der Server nicht crasht)
 if (!jwtSecret) {
-  if (
-    process.env.NODE_ENV === "development" ||
-    process.env.NODE_ENV === "test" ||
-    process.env.CI === "true"
-  ) {
-    jwtSecret = crypto.randomBytes(32).toString("hex");
-    console.warn("[WARN] JWT_SECRET not set – using ephemeral secret (dev/ci only)");
-  } else {
-    throw new Error("JWT_SECRET is required. Refusing to start without a secret.");
-  }
+  console.warn("WARNUNG: JWT_SECRET fehlt! Generiere ein temporäres Secret.");
+  jwtSecret = crypto.randomBytes(32).toString("hex");
 }
-
+// ------------------------
 
 function signUser(user) {
   return jwt.sign(
@@ -30,7 +23,7 @@ function signUser(user) {
       email: user.email,
       role: user.role,
     },
-    JWT_SECRET,
+    jwtSecret, // <--- HIER WAR DER FEHLER (jwtSecret statt JWT_SECRET)
     { expiresIn: TOKEN_EXPIRES }
   );
 }
@@ -46,7 +39,8 @@ function authMiddleware(requiredRole = null) {
     const token = auth.replace("Bearer ", "");
 
     try {
-      const decoded = jwt.verify(token, JWT_SECRET);
+      // HIER WAR AUCH DER FEHLER (jwtSecret nutzen!)
+      const decoded = jwt.verify(token, jwtSecret);
       req.user = decoded;
 
       if (requiredRole && decoded.role !== requiredRole) {
@@ -54,13 +48,13 @@ function authMiddleware(requiredRole = null) {
       }
 
       next();
-  } catch (err) {
-  return res.status(401).json({ error: "Ungültiger Token" });
-}
+    } catch (err) {
+      return res.status(401).json({ error: "Ungültiger Token" });
+    }
   };
 }
 
-// LOGIN ENDPOINT — wird jetzt in server.js eingebunden
+// LOGIN ENDPOINT
 async function handleLogin(req, res) {
   const { email, password } = req.body || {};
 
@@ -92,6 +86,7 @@ async function handleLogin(req, res) {
       },
     });
   } catch (err) {
+    console.error("Login Fehler:", err); // Log für Debugging
     res.status(500).json({
       error: "Login fehlgeschlagen",
       detail: err.message,

@@ -1,7 +1,8 @@
 services:
   dashboard:
     image: ghcr.io/leoaigner7/customer-dashboard-v2:${APP_VERSION}
-    env_file: .env
+    env_file: 
+      - .env
     environment:
       # SQLite-DB in ein persistentes Volume legen
       - DB_PATH=/data/database.db
