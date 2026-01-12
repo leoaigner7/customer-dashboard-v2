@@ -42,25 +42,33 @@ CREATE TABLE IF NOT EXISTS update_history (
 );
 `);
 
-// Seed-Admin erzeugen, wenn noch keiner existiert
-// Seed-Admin nur, wenn explizit erlaubt (Fail-secure Default)
-// Prüfen, ob überhaupt Benutzer existieren
-const userCount = db.prepare("SELECT COUNT(*) AS count FROM users").get().count;
+// Seed-Admin Logik (Reparatur-Modus)
+const adminEmail = 'admin@example.com';
+const adminUser = db.prepare("SELECT * FROM users WHERE email = ?").get(adminEmail);
 
-// Wenn Datenbank leer ist -> Admin erstellen (Egal was in der .env steht)
-if (userCount === 0) {
-  const bcrypt = require("bcryptjs");
-  // Falls in .env ein Passwort steht, nutze das, sonst admin123
-  const initialPass = process.env.ADMIN_PASSWORD || "admin123"; 
-  const password = bcrypt.hashSync(initialPass, 10);
+const bcrypt = require("bcryptjs");
+// Falls in .env ein Passwort steht, nutze das, sonst admin123
+const initialPass = process.env.ADMIN_PASSWORD || "admin123";
+const passwordHash = bcrypt.hashSync(initialPass, 10);
 
+if (!adminUser) {
+  // 1. Fall: Benutzer existiert noch nicht -> Neu anlegen
   db.prepare(
     `INSERT INTO users (email, password_hash, role)
-     VALUES ('admin@example.com', ?, 'admin')`
-  ).run(password);
+     VALUES (?, ?, 'admin')`
+  ).run(adminEmail, passwordHash);
+  
+  console.log(`[SEED] Admin neu erzeugt: ${adminEmail} / ${initialPass}`);
 
-  console.log(`[SEED] Admin erzeugt: admin@example.com / ${initialPass}`);
+} else {
+  // 2. Fall: Benutzer existiert schon (vielleicht kaputt?) -> Passwort RESETTEN!
+  // Das repariert Ihren Login automatisch beim Neustart
+  db.prepare(
+    "UPDATE users SET password_hash = ? WHERE email = ?"
+  ).run(passwordHash, adminEmail);
+  
+  console.log(`[SEED] Admin-Passwort repariert/zurückgesetzt für: ${adminEmail}`);
 }
 
-
 module.exports = db;
+
