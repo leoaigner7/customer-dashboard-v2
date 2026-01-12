@@ -16,6 +16,17 @@ fi
 if [ -z "${APP_VERSION:-}" ]; then
   if [ -f "$ROOT_DIR/VERSION.txt" ]; then
     APP_VERSION=$(cat "$ROOT_DIR/VERSION.txt" | tr -d '[:space:]')
+    
+    # WICHTIG: Die Version muss in die .env Datei geschrieben werden!
+    if [ -f "$DEPLOY_DIR/.env" ]; then
+       # Wenn APP_VERSION=... schon existiert, ersetzen
+       if grep -q "^APP_VERSION=" "$DEPLOY_DIR/.env"; then
+         sed -i "s/^APP_VERSION=.*/APP_VERSION=$APP_VERSION/" "$DEPLOY_DIR/.env"
+       else
+         # Sonst anhängen
+         echo "APP_VERSION=$APP_VERSION" >> "$DEPLOY_DIR/.env"
+       fi
+    fi
   else
     echo "FEHLER: Konnte Version nicht ermitteln (weder in .env noch VERSION.txt)."
     exit 1
