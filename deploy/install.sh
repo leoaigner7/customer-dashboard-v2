@@ -1,8 +1,55 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPOSE_FILE="${1:-docker-compose.yml}"
+# === KONFIGURATION & AUTOMATIK ===
 
+# Pfade ermitteln
+ROOT_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
+DEPLOY_DIR="$(dirname "$(realpath "$0")")"
+
+# 1. Existierende .env laden (falls vorhanden)
+if [ -f "$DEPLOY_DIR/.env" ]; then
+  source "$DEPLOY_DIR/.env"
+fi
+
+# 2. Version automatisch aus VERSION.txt lesen, falls nicht gesetzt
+if [ -z "${APP_VERSION:-}" ]; then
+  if [ -f "$ROOT_DIR/VERSION.txt" ]; then
+    APP_VERSION=$(cat "$ROOT_DIR/VERSION.txt" | tr -d '[:space:]')
+  else
+    echo "FEHLER: Konnte Version nicht ermitteln (weder in .env noch VERSION.txt)."
+    exit 1
+  fi
+fi
+export APP_VERSION
+
+# 3. JWT_SECRET prüfen und notfalls generieren (verhindert Boot-Loop)
+if [ -z "${JWT_SECRET:-}" ]; then
+  echo "Warnung: JWT_SECRET fehlt. Generiere ein zufälliges Secret..."
+  GENERATED_SECRET=$(openssl rand -hex 32)
+  export JWT_SECRET="$GENERATED_SECRET"
+  
+  # In .env speichern/anhängen
+  if [ ! -f "$DEPLOY_DIR/.env" ]; then
+    # Wenn keine .env da ist, kopiere example oder erstelle neu
+    if [ -f "$DEPLOY_DIR/.env.example" ]; then
+      cp "$DEPLOY_DIR/.env.example" "$DEPLOY_DIR/.env"
+    else
+      touch "$DEPLOY_DIR/.env"
+    fi
+  fi
+  
+  # Eintrag in .env hinzufügen oder aktualisieren
+  if grep -q "JWT_SECRET=" "$DEPLOY_DIR/.env"; then
+    # Wenn Zeile existiert (aber leer ist), ersetzen
+    sed -i "s/^JWT_SECRET=.*$/JWT_SECRET=$GENERATED_SECRET/" "$DEPLOY_DIR/.env"
+  else
+    # Sonst anhängen
+    echo "" >> "$DEPLOY_DIR/.env"
+    echo "JWT_SECRET=$GENERATED_SECRET" >> "$DEPLOY_DIR/.env"
+  fi
+  echo "Info: Neues Secret wurde in .env gespeichert."
+fi
 echo "=== Customer Dashboard Installer (Linux) ==="
 echo
 
