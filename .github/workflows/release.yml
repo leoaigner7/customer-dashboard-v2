@@ -15,6 +15,7 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: ${{ github.repository_owner }}/customer-dashboard-v2
+      VERSION: latest
 
     steps:
 
