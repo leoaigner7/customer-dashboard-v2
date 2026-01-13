@@ -199,8 +199,15 @@ echo "Installiere Update-Daemon..."
 # NPM Install im Daemon-Ordner
 if [ -f "$DAEMON_DIR/package.json" ]; then
     cd "$DAEMON_DIR"
-    # Als Service-User ausführen, damit node_modules die richtigen Rechte hat
-    sudo -u customer-dashboard env HOME="/var/lib/customer-dashboard" npm ci --omit=dev --silent
+    # WICHTIG: Alte, evtl. kaputte Module löschen!
+    sudo rm -rf node_modules package-lock.json
+    
+    # Sauber neu installieren (als Root ist ok hier, wir fixen Rechte später)
+    echo "Lade Abhängigkeiten neu..."
+    npm install --omit=dev --silent --no-audit
+    
+    # Rechte korrigieren
+    sudo chown -R customer-dashboard:customer-dashboard "$DAEMON_DIR"
 fi
 
 SERVICE_NAME="customer-dashboard-daemon"
