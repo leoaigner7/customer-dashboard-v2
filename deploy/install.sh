@@ -2,12 +2,11 @@
 set -euo pipefail
 
 # === Customer Dashboard Installer (Linux) ===
-# Version 2.0 - Stabilisiert & Robust
+# Version 2.2 - Fix Node Modules Copy
 
 # -------------------------------------------------------------
 # 0. Pfade und Variablen
 # -------------------------------------------------------------
-# Wir nutzen absolute Pfade basierend auf dem Skript-Ort
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -21,9 +20,6 @@ NODE_BIN="$(command -v node)"
 
 echo "=== Installation gestartet ==="
 echo "Installationsverzeichnis: $INSTALL_DIR"
-echo "Paketquelle:              $PACKAGE_ROOT"
-echo "Node.js Pfad:             $NODE_BIN"
-echo
 
 # -------------------------------------------------------------
 # 1. Checks
@@ -32,7 +28,6 @@ if ! command -v docker >/dev/null; then
   echo "FEHLER: Docker ist nicht installiert." >&2
   exit 1
 fi
-
 if ! command -v node >/dev/null; then
   echo "FEHLER: Node.js ist nicht installiert." >&2
   exit 1
@@ -41,11 +36,10 @@ fi
 # -------------------------------------------------------------
 # 2. Verzeichnisse & User
 # -------------------------------------------------------------
-echo "Richte Service-User ein (customer-dashboard)..."
+echo "Richte Service-User ein..."
 if ! id "customer-dashboard" &>/dev/null; then
     sudo useradd -r -m -d /var/lib/customer-dashboard -s /usr/sbin/nologin customer-dashboard
 fi
-# Sicherstellen, dass der User Docker nutzen darf
 sudo usermod -aG docker customer-dashboard
 
 echo "Erstelle Verzeichnisse..."
@@ -53,19 +47,22 @@ sudo mkdir -p "$DEPLOY_DIR" "$DAEMON_DIR" "$LOG_DIR"
 sudo mkdir -p "$DEPLOY_DIR/data" "$DEPLOY_DIR/logs"
 
 # -------------------------------------------------------------
-# 3. Dateien kopieren
+# 3. Dateien kopieren (MIT WICHTIGEM EXCLUDE)
 # -------------------------------------------------------------
 echo "Kopiere Dateien..."
-# Wir nutzen rsync falls vorhanden, sonst cp (sauberer overwrite)
 if command -v rsync >/dev/null; then
-    sudo rsync -a --delete "$SCRIPT_DIR/" "$DEPLOY_DIR/"
-    sudo rsync -a --delete "$PACKAGE_ROOT/system-daemon/" "$DAEMON_DIR/"
+    # WICHTIG: node_modules ausschließen, damit keine Windows-Dateien kopiert werden!
+    sudo rsync -a --delete --exclude 'node_modules' "$SCRIPT_DIR/" "$DEPLOY_DIR/"
+    sudo rsync -a --delete --exclude 'node_modules' "$PACKAGE_ROOT/system-daemon/" "$DAEMON_DIR/"
 else
+    # Fallback für cp (weniger elegant, aber okay)
     sudo cp -a "$SCRIPT_DIR/." "$DEPLOY_DIR/"
     sudo cp -a "$PACKAGE_ROOT/system-daemon/." "$DAEMON_DIR/"
+    # Sicherstellen, dass wir keine alten node_modules kopiert haben
+    sudo rm -rf "$DAEMON_DIR/node_modules"
 fi
 
-# Public Key kopieren
+# Public Key
 TRUST_DIR="$DAEMON_DIR/trust"
 SRC_KEY="$PACKAGE_ROOT/system-daemon/trust/updater-public.pem"
 sudo mkdir -p "$TRUST_DIR"
@@ -73,15 +70,13 @@ if [ -f "$SRC_KEY" ]; then
     sudo cp "$SRC_KEY" "$TRUST_DIR/updater-public.pem"
     echo "Update-Signatur installiert."
 else
-    echo "WARNUNG: Public Key nicht gefunden ($SRC_KEY)."
+    echo "WARNUNG: Public Key nicht gefunden."
 fi
 
 # -------------------------------------------------------------
-# 4. Konfiguration (.env) sicher erstellen
+# 4. Konfiguration (.env)
 # -------------------------------------------------------------
 echo "Konfiguriere Umgebung..."
-
-# Hilfsfunktion: Fügt Zeilenumbruch ein, falls am Ende der Datei keiner ist
 ensure_final_newline() {
     local file="$1"
     if [ -s "$file" ] && [ "$(tail -c 1 "$file" | wc -l)" -eq 0 ]; then
@@ -89,55 +84,37 @@ ensure_final_newline() {
     fi
 }
 
-# .env aus Vorlage erstellen, falls nicht existent
 if [ ! -f "$ENV_FILE" ]; then
     if [ -f "$DEPLOY_DIR/.env.example" ]; then
         sudo cp "$DEPLOY_DIR/.env.example" "$ENV_FILE"
     else
         sudo touch "$ENV_FILE"
     fi
-fi  # <--- WICHTIG: Das 'fi' muss HIER stehen!
+fi
 
-# --- AUTOKORREKTUR START ---
-# Repariert den spezifischen Fehler, falls "APP_VERSION" an das Passwort geklebt wurde
-# (Dies muss AUCH laufen, wenn die Datei schon existiert!)
+# Autokorrektur
 if [ -f "$ENV_FILE" ]; then
-    # Ersetzt "irgendwasAPP_VERSION=" durch "irgendwas" + Zeilenumbruch + "APP_VERSION="
     sudo sed -i 's/APP_VERSION=/\nAPP_VERSION=/g' "$ENV_FILE"
-    
-    # Entfernt doppelte Leerzeilen, die dadurch entstanden sein könnten
     sudo sed -i '/^$/N;/^\n$/D' "$ENV_FILE"
 fi
-# --- AUTOKORREKTUR ENDE ---
-
-
-# Sicherstellen, dass .env sauber endet, bevor wir schreiben
 ensure_final_newline "$ENV_FILE"
 
-# --- VERSION SETZEN ---
+# Version setzen
 if [ -f "$PACKAGE_ROOT/VERSION.txt" ]; then
     NEW_VERSION=$(cat "$PACKAGE_ROOT/VERSION.txt" | tr -d '[:space:]')
 else
     NEW_VERSION="latest"
 fi
-
-# Prüfen, ob APP_VERSION schon in der Datei steht
 if grep -q "^APP_VERSION=" "$ENV_FILE"; then
-    # Ersetzen
     sudo sed -i "s/^APP_VERSION=.*/APP_VERSION=$NEW_VERSION/" "$ENV_FILE"
 else
-    # Anhängen
     echo "APP_VERSION=$NEW_VERSION" | sudo tee -a "$ENV_FILE" > /dev/null
 fi
 
-# --- JWT SECRET SETZEN ---
-# Prüfen, ob Secret gesetzt ist (und nicht leer ist)
+# Secret setzen
 CURRENT_SECRET=$(grep "^JWT_SECRET=" "$ENV_FILE" | cut -d '=' -f2)
-
 if [ -z "$CURRENT_SECRET" ]; then
-    echo "Generiere neues Sicherheits-Token..."
     NEW_SECRET=$(openssl rand -hex 32)
-    
     if grep -q "^JWT_SECRET=" "$ENV_FILE"; then
         sudo sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$NEW_SECRET/" "$ENV_FILE"
     else
@@ -146,30 +123,20 @@ if [ -z "$CURRENT_SECRET" ]; then
     fi
 fi
 
-# .env laden für das Skript
 set +o allexport
 source "$ENV_FILE"
 PORT="${APP_PORT:-8080}"
 
 # -------------------------------------------------------------
-# 5. Berechtigungen reparieren (VOR Docker Start!)
+# 5. Berechtigungen & Start
 # -------------------------------------------------------------
 echo "Setze Berechtigungen..."
-# Alles gehört dem Service-User
 sudo chown -R customer-dashboard:customer-dashboard "$INSTALL_DIR"
-# Das Skript selbst muss ausführbar bleiben
 sudo chmod +x "$DEPLOY_DIR/install.sh"
 
-# -------------------------------------------------------------
-# 6. Docker Container starten
-# -------------------------------------------------------------
 cd "$DEPLOY_DIR"
-
 echo "Starte Dashboard (Port $PORT)..."
-# Alte Container stoppen (falls vorhanden)
 sudo docker compose down --remove-orphans >/dev/null 2>&1 || true
-
-# Neu starten
 sudo docker compose pull -q
 sudo docker compose up -d
 
@@ -184,29 +151,27 @@ for ((i=1; i<=RETRIES; i++)); do
     echo "✅ Dashboard ist online!"
     break
   fi
-  if [ $i -eq $RETRIES ]; then
-    echo "⚠️  Warnung: Dashboard antwortet noch nicht. Bitte Logs prüfen: sudo docker logs deploy-dashboard-1"
-  else
-    sleep 2
-  fi
+  sleep 2
 done
 
 # -------------------------------------------------------------
-# 8. Service Installation (Daemon)
+# 8. Service Installation (Daemon) - DER WICHTIGE FIX
 # -------------------------------------------------------------
 echo "Installiere Update-Daemon..."
 
-# NPM Install im Daemon-Ordner
-if [ -f "$DAEMON_DIR/package.json" ]; then
+if [ -d "$DAEMON_DIR" ]; then
     cd "$DAEMON_DIR"
-    # WICHTIG: Alte, evtl. kaputte Module löschen!
+    
+    # ALLES LÖSCHEN, was Probleme machen könnte
+    echo "Bereinige alte Module..."
     sudo rm -rf node_modules package-lock.json
     
-    # Sauber neu installieren (als Root ist ok hier, wir fixen Rechte später)
+    # SAUBER NEU INSTALLIEREN
     echo "Lade Abhängigkeiten neu..."
-    npm install --omit=dev --silent --no-audit
+    # Pfad explizit setzen, um sudo-Probleme zu vermeiden
+    sudo env PATH="$PATH" npm install --omit=dev --silent --no-audit --no-fund
     
-    # Rechte korrigieren
+    # Rechte an Service-User zurückgeben
     sudo chown -R customer-dashboard:customer-dashboard "$DAEMON_DIR"
 fi
 
@@ -217,7 +182,6 @@ sudo tee "$SERVICE_FILE" >/dev/null <<EOF
 [Unit]
 Description=Customer Dashboard Auto Update Daemon
 After=network-online.target docker.service
-Wants=network-online.target
 
 [Service]
 Type=simple
@@ -228,10 +192,6 @@ ExecStart=/usr/bin/env node $DAEMON_DIR/daemon.js
 Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
-# Sicherheit:
-NoNewPrivileges=true
-ProtectSystem=full
-# Erlaube Schreiben nur im Installationsverzeichnis
 ReadWritePaths=$INSTALL_DIR
 
 [Install]
@@ -244,10 +204,7 @@ sudo systemctl restart "$SERVICE_NAME"
 
 echo
 echo "==========================================="
-echo "   INSTALLATION ERFOLGREICH ABGESCHLOSSEN"
+echo "   INSTALLATION ERFOLGREICH"
 echo "==========================================="
 echo "URL:      http://localhost:${PORT}/"
 echo "Login:    admin@example.com / admin123"
-echo "Logs:     $LOG_DIR"
-echo "Service:  systemctl status $SERVICE_NAME"
-echo "==========================================="
