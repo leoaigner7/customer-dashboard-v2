@@ -11,10 +11,10 @@ services:
     ports:
       - "${APP_PORT:-8080}:3000"
     volumes:
-      # Persistente Daten (DB)
-      - ./data:/data
-      # Persistente Logs/Status
-      - ./logs:/logs
+      
+     - db_data:/data      
+     - dashboard_logs:/logs
+
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
@@ -26,3 +26,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+volumes:    # Definition der Volumes am Ende der Datei
+  db_data:
+  dashboard_logs:  
