@@ -4,11 +4,9 @@ const path = require("path");
 
 const router = express.Router();
 
-// Pfad des Statusfiles aus dem Daemon
 const DEFAULT_STATUS_FILE =
   "C:\\CustomerDashboard\\logs\\update-status.json";
 
-// Unterstützt Linux & Windows
 function getStatusFilePath() {
   if (process.env.STATUS_FILE) {
     return process.env.STATUS_FILE;
@@ -16,7 +14,6 @@ function getStatusFilePath() {
   return DEFAULT_STATUS_FILE;
 }
 
-// API: GET /api/status
 router.get("/", (req, res) => {
   const statusFile = getStatusFilePath();
 
@@ -47,7 +44,6 @@ router.get("/", (req, res) => {
         parsed.lastResult === "rollback" ||
         parsed.lastResult === "failed-rollback";
 
-      // Nächster gepl. Lauf berechnen
       const interval =
         parseInt(process.env.DAEMON_INTERVAL_MS || "300000", 10) || 300000;
       if (parsed.lastCheckedAt) {
@@ -55,7 +51,6 @@ router.get("/", (req, res) => {
         data.nextCheckAt = next.toISOString();
       }
 
-      // Health Information
       data.health = parsed.health || "unknown";
     }
   } catch (err) {

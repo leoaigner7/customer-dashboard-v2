@@ -5,11 +5,10 @@ const crypto = require("crypto");
 
 const TOKEN_EXPIRES = process.env.JWT_EXPIRES_IN || "8h";
 
-// --- SECRET BESTIMMEN ---
-// Wir nennen die Variable hier 'jwtSecret' und bleiben dabei.
+// SECRET BESTIMMEN 
 let jwtSecret = process.env.JWT_SECRET;
 
-// FALLBACK: Wenn kein Secret da ist, generiere eins (damit der Server nicht crasht)
+// FALLBACK: Wenn kein Secret da ist, eins generieren (damit der Server nicht crasht)
 if (!jwtSecret) {
   console.warn("WARNUNG: JWT_SECRET fehlt! Generiere ein temporäres Secret.");
   jwtSecret = crypto.randomBytes(32).toString("hex");
@@ -23,7 +22,7 @@ function signUser(user) {
       email: user.email,
       role: user.role,
     },
-    jwtSecret, // KORRIGIERT: Variable existiert jetzt
+    jwtSecret, 
     { expiresIn: TOKEN_EXPIRES }
   );
 }
@@ -39,7 +38,6 @@ function authMiddleware(requiredRole = null) {
     const token = auth.replace("Bearer ", "");
 
     try {
-      // KORRIGIERT: Hier auch 'jwtSecret' nutzen
       const decoded = jwt.verify(token, jwtSecret);
       req.user = decoded;
 
@@ -54,7 +52,6 @@ function authMiddleware(requiredRole = null) {
   };
 }
 
-// LOGIN ENDPOINT
 async function handleLogin(req, res) {
   const { email, password } = req.body || {};
 

@@ -4,7 +4,6 @@ const { authMiddleware } = require("../auth");
 
 const router = express.Router();
 
-// GET /api/settings → Alle Settings abrufen
 router.get("/", authMiddleware("admin"), (req, res) => {
   try {
     const rows = db.prepare("SELECT key, value FROM settings").all();
@@ -19,7 +18,7 @@ router.get("/", authMiddleware("admin"), (req, res) => {
   }
 });
 
-// POST /api/settings → Setting setzen
+
 router.post("/", authMiddleware("admin"), (req, res) => {
   const { key, value } = req.body;
 
@@ -39,7 +38,7 @@ router.post("/", authMiddleware("admin"), (req, res) => {
   }
 });
 
-// Spezialrouten für Update-Policy
+
 router.post("/policy", authMiddleware("admin"), (req, res) => {
   const { pinnedVersion, allowDowngrade } = req.body;
 

@@ -9,7 +9,7 @@ router.get("/", (req, res) => {
     { id: 2, title: "Logs", value: db.prepare("SELECT COUNT(*) AS c FROM logs").get().c }
   ];
 
-  // Letzte 5 Logs
+  // Letzten 5 Logs
   const recentLogs = db.prepare(
     "SELECT level, message, created_at FROM logs ORDER BY id DESC LIMIT 5"
   ).all();

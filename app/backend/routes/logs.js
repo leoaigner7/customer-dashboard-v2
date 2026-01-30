@@ -3,7 +3,6 @@ const db = require("../db");
 
 const router = express.Router();
 
-// GET /api/logs
 router.get("/",  (req, res) => {
   try {
     const { limit = 200, level, since } = req.query;
@@ -38,7 +37,6 @@ router.get("/",  (req, res) => {
   }
 });
 
-// POST /api/logs
 router.post("/", (req, res) => {
   try {
     const { level = "info", message } = req.body;
@@ -55,7 +53,7 @@ router.post("/", (req, res) => {
     db.prepare(
       `INSERT INTO logs (level, message, created_at)
        VALUES (?, ?, datetime('now'))`
-    ).run(safelevel, safemessage);
+    ).run(safeLevel, safeMessage);
 
     res.json({ status: "ok" });
   } catch (err) {

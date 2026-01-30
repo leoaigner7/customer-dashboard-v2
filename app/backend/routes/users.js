@@ -5,7 +5,7 @@ const { authMiddleware } = require("../auth");
 
 const router = express.Router();
 
-// GET /api/users → Admin: Nutzertabelle abrufen
+// Admin: Usertabelle abrufen
 router.get("/", authMiddleware("admin"), (req, res) => {
   try {
     const users = db
@@ -18,7 +18,7 @@ router.get("/", authMiddleware("admin"), (req, res) => {
   }
 });
 
-// POST /api/users → Admin: Benutzer anlegen
+// Admin: Benutzer anlegen
 router.post("/", authMiddleware("admin"), async (req, res) => {
   const { email, password, role = "user" } = req.body;
 
@@ -41,7 +41,7 @@ router.post("/", authMiddleware("admin"), async (req, res) => {
   }
 });
 
-// PUT /api/users/:id/password → User oder Admin: Passwort ändern
+//  User oder Admin: Passwort ändern
 router.put("/:id/password", authMiddleware(), async (req, res) => {
   const userId = parseInt(req.params.id, 10);
   const { newPassword } = req.body;
@@ -65,7 +65,7 @@ router.put("/:id/password", authMiddleware(), async (req, res) => {
   }
 });
 
-// DELETE /api/users/:id → Admin: Benutzer löschen
+//  Admin: Benutzer löschen
 router.delete("/:id", authMiddleware("admin"), (req, res) => {
   const userId = parseInt(req.params.id, 10);
 
