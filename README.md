@@ -75,8 +75,9 @@ Der Status jedes Update-Laufs wird transparent in einer Statusdatei persistiert.
 
 #  ![ ](image.png) Installation Linux || Windows
 
-cd Deploy
-sudo ./install.sh (Linux) || ./install.ps1 (Windows) 
+    cd Deploy
+    
+    sudo ./install.sh (Linux) || ./install.ps1 (Windows) 
 
 Der Installer: 
 
