@@ -2,7 +2,7 @@
 
 Ein technisches Referenzprojekt zur Konzeption und Implementierung einer sicheren, CI/CD-basierten Update-Architektur unter restriktiven Infrastrukturbedingungen. Der Fokus dieses Repositoriers liegt nicht auf der funktionalität der Beispielanwendung, sondern auf dem vollständigen Lebenszyklus einer Software. Von der Entwicklung und Build über Release, Installation, Betrieb und autonome, sichere Updates beim Kunden. 
 
-# ![alt text](image-3.png) Zielsetzung:
+# ![ ](image-4.png) Zielsetzung:
 
 Ziel dieses Projekts ist die Entwicklung eines deterministischen, fehlertoleranten und sicherheitsorientierten Update-Mechanismus, der:
 
@@ -40,7 +40,7 @@ Update-Daemon  -> Autonomer, sicherer Pull-Updater
 
 
 
-# ![alt text](image-2.png) Sicherheitskonzept
+# ![alt text](image-5.png) Sicherheitskonzept
 
 Das Update-System basiert auf einer kryptografischen Vertrauenskette: 
 
@@ -56,7 +56,7 @@ Außerdem:
 
 
 
-# ![ ](image-1.png) Update-Strategie
+# ![alt text](image-6.png) Update-Strategie
 
 - Pull basiert
 
