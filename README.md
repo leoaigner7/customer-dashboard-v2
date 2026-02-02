@@ -88,12 +88,13 @@ Der Installer:
 
 Standard-Login:
 
-admin@example.com
-admin123
+    admin@example.com
+
+    admin123
 
 
 
-# Auto-Update-Daemon
+# ![alt text](image-7.png) Auto-Update-Daemon
 
 Eigenschaften:
 
