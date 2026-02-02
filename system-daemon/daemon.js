@@ -1,30 +1,16 @@
-// ------------------------------------------------------------
-// BOOT-SAFETY (entscheidend für SYSTEM + Task Scheduler)
-// ------------------------------------------------------------
+
 process.chdir(__dirname);
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
-
-
-// system-daemon/daemon.js
-
-/********************************************************************
- * CUSTOMER DASHBOARD – AUTO-UPDATER 
- *
- * Aufgaben:
- *  - periodisch nach neuen Versionen suchen (GitHub / offline / Share)
- *  - bei neuer Version: Docker-Update durchführen
- *  - vor Update: Backup des deploy-Verzeichnisses
- *  - nach Fehler: Rollback auf letztes Backup (falls vorhanden)
- *  - Status in update-status.json pflegen
- ********************************************************************/
-
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const AdmZip = require("adm-zip");
+
+
+
 function rmDirRetry(dir, tries = 15, delayMs = 250) {
   let last = null;
   for (let i = 0; i < tries; i++) {
@@ -70,9 +56,7 @@ const target = require("./targets/docker-dashboard");
 const security = require("./security");
 const { checkAndApplySelfUpdate } = require("./selfUpdate");
 
-// ------------------------------------------------------------
-// KONFIGURATION LADEN + OS-NEUTRAL AUFLÖSEN
-// ------------------------------------------------------------
+
 const CONFIG_PATH =
   process.env.AUTUPDATE_CONFIG || path.join(__dirname, "config.json");
 
@@ -88,6 +72,7 @@ function resolveInstallRoot() {
 
 const INSTALL_ROOT = resolveInstallRoot();
 
+// ersetzt __INSTALL_ROOT__ / __NETWORK_ROOT__ in config.json
 function resolvePaths(obj) {
   if (typeof obj === "string") {
     return obj
@@ -119,18 +104,12 @@ const statusFile =
 
 const intervalMs = config.checkIntervalMs || 5 * 60 * 1000;
 
-// Wrapper um target.log (nachdem config final ist)
+// Logging über target
 function log(level, message, extra) {
   target.log(level, message, config, extra);
 }
 
 
-
-
-
-// ------------------------------------------------------------
-// STATUSDATEI
-// ------------------------------------------------------------
 function readStatus() {
   try {
     if (!fs.existsSync(statusFile)) return {};
@@ -151,10 +130,7 @@ function writeStatus(partial) {
   fs.mkdirSync(path.dirname(statusFile), { recursive: true });
   fs.writeFileSync(statusFile, JSON.stringify(updated, null, 2), "utf8");
 }
-
-// ------------------------------------------------------------
-// VERSIONEN VERGLEICHEN
-// ------------------------------------------------------------
+// SemVer Vergleich
 function compareSemver(a, b) {
   if (!a && !b) return 0;
   if (!a) return -1;
@@ -173,9 +149,7 @@ function compareSemver(a, b) {
   return 0;
 }
 
-// ------------------------------------------------------------
 // UPDATE-QUELLEN
-// ------------------------------------------------------------
 async function getGithubCandidate() {
   const src = config.sources && config.sources.github;
   if (!src || !src.enabled || !src.apiUrl) return null;
@@ -195,7 +169,7 @@ async function getGithubCandidate() {
 
     const version = tag.replace(/^v/i, "");
 
-    // 🔐 SECURITY: pinnedVersion erzwingen
+    // SECURITY: pinnedVersion  -> nur exakt diese Version erlauben
     if (
       config.policy &&
       config.policy.pinnedVersion &&
@@ -300,7 +274,7 @@ async function getNetworkShareCandidate() {
     return null;
   }
 }
-
+// wählt die "beste Version" aus allen Quellen unter berüücksichtigung der Policy
 async function resolveLatestCandidate(currentVersion) {
   const candidates = [];
 
@@ -360,9 +334,7 @@ async function resolveLatestCandidate(currentVersion) {
   return best;
 }
 
-// ------------------------------------------------------------
 // BACKUP & ROLLBACK
-// ------------------------------------------------------------
 function copyRecursive(src, dest) {
   const stat = fs.statSync(src);
   if (stat.isDirectory()) {
@@ -479,9 +451,7 @@ function restoreBackup(backupDir) {
   throw lastError || new Error("Rollback fehlgeschlagen.");
 }
 
-// ------------------------------------------------------------
-// UPDATE-ANWENDUNG
-// ------------------------------------------------------------
+// Update anwenden: Docker
 async function applyDockerUpdate(candidate, latestVersion) {
   const started = Date.now();
 
@@ -524,12 +494,11 @@ function safeExtractZip(zipPath, targetDir) {
   const root = path.resolve(targetDir) + path.sep;
 
   for (const e of entries) {
-    // unify separators to prevent weird Windows cases
     const name = e.entryName.replace(/\\/g, "/");
 
-    // IMPORTANT: resolve against targetDir and ensure we stay inside root
     const outPath = path.resolve(targetDir, name);
 
+    // verhindert "../ ../" Attacken im Zip
     if (!outPath.startsWith(root)) {
       throw new Error(`ZipSlip detected: ${e.entryName}`);
     }
@@ -544,9 +513,7 @@ function safeExtractZip(zipPath, targetDir) {
   }
 }
 
-// ------------------------------------------------------------
-// HAUPT-UPDATE-LOGIK
-// ------------------------------------------------------------
+// Update check
 async function checkOnce() {
   const startedAt = new Date();
   const startedIso = startedAt.toISOString();
@@ -563,7 +530,7 @@ async function checkOnce() {
     });
 
     const candidate = await resolveLatestCandidate(currentVersion);
-
+    //kein Update
     if (!candidate || !candidate.version) {
       log("info", "Keine neuere Version gefunden.", {
         currentVersion,
@@ -579,7 +546,7 @@ async function checkOnce() {
       });
       return;
     }
-
+// nur Updaten wenn wirklich neue Version oder Downgrade erlaubt ist
     const cmp = compareSemver(candidate.version, currentVersion || "0.0.0");
     if (cmp <= 0 && !(config.policy && config.policy.allowDowngrade)) {
       log("info", "Gefundene Version ist nicht neuer als die installierte.", {
@@ -612,16 +579,14 @@ async function checkOnce() {
     await applyDockerUpdate(candidate, candidate.version);
   } 
   else if (candidate.artifactType === "zip") {
-  // -----------------------------
-  // STAGING DIR (immer zuerst)
-  // -----------------------------
+
   const stagingDir = path.join(
     config.paths.stagingDir || path.join(installRoot, "staging"),
     `update-${Date.now()}`
   );
   fs.mkdirSync(stagingDir, { recursive: true });
 
-  // stabile Kopien (Windows-safe)
+// Update Dateien zuerst lokal kopieren, damit netzwerk/Usb abbrüche das Update nicht zerstören
   const stableZip = path.join(stagingDir, "package.zip");
   const stableHash = path.join(stagingDir, "package.zip.sha256");
   const stableSig = path.join(stagingDir, "package.zip.sig");
@@ -640,33 +605,25 @@ async function checkOnce() {
     fs.copyFileSync(candidate.signatureFile, stableSig);
   }
 
-  // -----------------------------
-  // SECURITY: HASH
-  // -----------------------------
+ // Integrität (Hash)
   if (config.security?.requireHash) {
     log("info", "Prüfe ZIP-Integrität (Hash)...", { zipPath: stableZip });
 
-    // throws on mismatch
     await security.verifyZipHash(stableZip, stableHash);
 
     log("info", "ZIP-Integrität erfolgreich verifiziert.");
   }
 
-  // -----------------------------
-  // SECURITY: SIGNATURE
-  // -----------------------------
+  //Signatur
   if (config.security?.requireSignature) {
     log("info", "Prüfe kryptografische Signatur des ZIPs", { sigPath: stableSig });
 
-    // throws on invalid/missing
     security.verifySignatureOrThrow(stableZip, stableSig);
 
     log("info", "Signaturprüfung erfolgreich.");
   }
 
-// -----------------------------
-// ZIP INSTALLATION (SAFE EXTRACT + ATOMIC SWAP)
-// -----------------------------
+// entpacken
 log("info", "Entpacke ZIP sicher (ZipSlip Schutz)", { stagingDir });
 
 const extractDir = path.join(stagingDir, "extract");
@@ -682,25 +639,25 @@ if (!fs.existsSync(newDeploy)) {
   throw new Error("ZIP enthält kein deploy-Verzeichnis.");
 }
 
-
-  log("info", "Stoppe Docker vor Atomic Swap (Windows File Locks vermeiden)");
-
-// 1) Docker DOWN (ohne -v!)
+// docker stoppen -> verhindert Windows locks auf deploy datein
+log("info", "Stoppe Docker vor Atomic Swap (Windows File Locks vermeiden)");
 await target.stopDashboard(config);
 
-log("info", "Atomic Swap: deploy-Verzeichnis wird ersetzt (mit Retry)");
 
-// 2) Swap: erst löschen, dann umbenennen – beides mit Retry
+// atomic swap deploy 
+log("info", "Atomic Swap: deploy-Verzeichnis wird ersetzt (mit Retry)");
 rmDirRetry(deployTarget);
 renameRetry(newDeploy, deployTarget);
 
+
+// erwartete Persistenzordner sicherstellen
 fs.mkdirSync(path.join(deployTarget, "data"), { recursive: true });
 fs.mkdirSync(path.join(deployTarget, "logs"), { recursive: true });
 
-// Version setzen
+// neue Version persistieren
 target.writeEnvVersion(config, candidate.version);
 
-// 3) Docker UP
+// docker wieder hochfahren + prüfen
 await target.startDashboard(config);
 
 // 4) Healthcheck
@@ -734,6 +691,7 @@ if (!ok) {
         error: err.message,
       });
 
+      // Rollback nzur wenn Backup existiert und Backups aktiv sind
       if (config.backup && config.backup.enabled && backupDir) {
         log("warn", "Update fehlgeschlagen – starte Rollback aus Backup.", {
           backupDir,
@@ -771,6 +729,7 @@ if (!ok) {
           });
         }
       } else {
+        // kein Backup nur status "Failed"
         writeStatus({
           currentVersion,
           latestVersion: candidate.version,
@@ -793,9 +752,6 @@ if (!ok) {
   }
 }
 
-// ------------------------------------------------------------
-// MAIN
-// ------------------------------------------------------------
 async function main() {
   log("info", "Systemweiter Auto-Update-Daemon gestartet.");
 

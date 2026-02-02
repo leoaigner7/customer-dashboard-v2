@@ -1,29 +1,29 @@
-#!/usr/bin/env bash
+#Skript soll mit bash ausgeführt werden
 set -euo pipefail
 
-# === Customer Dashboard Installer (Linux) ===
-# Version 2.2 - Fix Node Modules Copy
-
-# -------------------------------------------------------------
-# 0. Pfade und Variablen
-# -------------------------------------------------------------
+# Ornder, in dem das Script liegt deploy/install.sh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Projekt Root
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Installationspfade auf dem Zielsystem
 INSTALL_DIR="/opt/customer-dashboard"
 DEPLOY_DIR="$INSTALL_DIR/deploy"
 DAEMON_DIR="$INSTALL_DIR/system-daemon"
 LOG_DIR="$INSTALL_DIR/logs"
+
+#.env Datei 
 ENV_FILE="$DEPLOY_DIR/.env"
 
+#Node pfad ermitteln
 NODE_BIN="$(command -v node)"
 
 echo "=== Installation gestartet ==="
 echo "Installationsverzeichnis: $INSTALL_DIR"
 
-# -------------------------------------------------------------
-# 1. Checks
-# -------------------------------------------------------------
+
+
+#Vorab geprüft ob Docker & node installiert sind
 if ! command -v docker >/dev/null; then
   echo "FEHLER: Docker ist nicht installiert." >&2
   exit 1
@@ -33,9 +33,8 @@ if ! command -v node >/dev/null; then
   exit 1
 fi
 
-# -------------------------------------------------------------
-# 2. Verzeichnisse & User
-# -------------------------------------------------------------
+# Service-User "customer-Dashboard" anöegen, falls nicht vorhanden -r -> system User || -m -> Homeverzeichnis erstellen || -d -> Homepfad || -s --> loginshell deaktiviert
+
 echo "Richte Service-User ein..."
 if ! id "customer-dashboard" &>/dev/null; then
     sudo useradd -r -m -d /var/lib/customer-dashboard -s /usr/sbin/nologin customer-dashboard
@@ -46,23 +45,21 @@ echo "Erstelle Verzeichnisse..."
 sudo mkdir -p "$DEPLOY_DIR" "$DAEMON_DIR" "$LOG_DIR"
 sudo mkdir -p "$DEPLOY_DIR/data" "$DEPLOY_DIR/logs"
 
-# -------------------------------------------------------------
-# 3. Dateien kopieren (MIT WICHTIGEM EXCLUDE)
-# -------------------------------------------------------------
+
 echo "Kopiere Dateien..."
 if command -v rsync >/dev/null; then
     # WICHTIG: node_modules ausschließen, damit keine Windows-Dateien kopiert werden!
     sudo rsync -a --delete --exclude 'node_modules' "$SCRIPT_DIR/" "$DEPLOY_DIR/"
     sudo rsync -a --delete --exclude 'node_modules' "$PACKAGE_ROOT/system-daemon/" "$DAEMON_DIR/"
 else
-    # Fallback für cp (weniger elegant, aber okay)
+#Fallback: cp
     sudo cp -a "$SCRIPT_DIR/." "$DEPLOY_DIR/"
     sudo cp -a "$PACKAGE_ROOT/system-daemon/." "$DAEMON_DIR/"
-    # Sicherstellen, dass wir keine alten node_modules kopiert haben
+# Sicherstellen, dass ich keine alten node_modules kopiert hab
     sudo rm -rf "$DAEMON_DIR/node_modules"
 fi
 
-# Public Key
+# Public Key -> der daemon kann damit Releases signaturbasiert validieren
 TRUST_DIR="$DAEMON_DIR/trust"
 SRC_KEY="$PACKAGE_ROOT/system-daemon/trust/updater-public.pem"
 sudo mkdir -p "$TRUST_DIR"
@@ -73,9 +70,7 @@ else
     echo "WARNUNG: Public Key nicht gefunden."
 fi
 
-# -------------------------------------------------------------
-# 4. Konfiguration (.env)
-# -------------------------------------------------------------
+# Hilfsfunktion -> dass Datei mit newline endet -> sonst später "echoVar=..." Zeilen kaputt formatiert werden
 echo "Konfiguriere Umgebung..."
 ensure_final_newline() {
     local file="$1"
@@ -84,6 +79,7 @@ ensure_final_newline() {
     fi
 }
 
+#falls .env nicht existiert
 if [ ! -f "$ENV_FILE" ]; then
     if [ -f "$DEPLOY_DIR/.env.example" ]; then
         sudo cp "$DEPLOY_DIR/.env.example" "$ENV_FILE"
@@ -92,14 +88,15 @@ if [ ! -f "$ENV_FILE" ]; then
     fi
 fi
 
-# Autokorrektur
+# Autokorrektur gegen kaputte .env formatierung
+# entfernt doppelte leerzeile -> sorft dafür, dass APP_VERSION sauber in einer eigenen Zeile steht
 if [ -f "$ENV_FILE" ]; then
     sudo sed -i 's/APP_VERSION=/\nAPP_VERSION=/g' "$ENV_FILE"
     sudo sed -i '/^$/N;/^\n$/D' "$ENV_FILE"
 fi
 ensure_final_newline "$ENV_FILE"
 
-# Version setzen
+# Version setzen kommt aus Version.txt -> falls nicht vorhanden "latest"
 if [ -f "$PACKAGE_ROOT/VERSION.txt" ]; then
     NEW_VERSION=$(cat "$PACKAGE_ROOT/VERSION.txt" | tr -d '[:space:]')
 else
@@ -111,7 +108,8 @@ else
     echo "APP_VERSION=$NEW_VERSION" | sudo tee -a "$ENV_FILE" > /dev/null
 fi
 
-# Secret setzen
+# Secret setzen falls fehlt -> backend braucht token für signierung 
+#wenn fehlt wird zufälliges Secret erstellt
 CURRENT_SECRET=$(grep "^JWT_SECRET=" "$ENV_FILE" | cut -d '=' -f2)
 if [ -z "$CURRENT_SECRET" ]; then
     NEW_SECRET=$(openssl rand -hex 32)
@@ -127,9 +125,7 @@ set +o allexport
 source "$ENV_FILE"
 PORT="${APP_PORT:-8080}"
 
-# -------------------------------------------------------------
-# 5. Berechtigungen & Start
-# -------------------------------------------------------------
+
 echo "Setze Berechtigungen..."
 sudo chown -R customer-dashboard:customer-dashboard "$INSTALL_DIR"
 sudo chmod +x "$DEPLOY_DIR/install.sh"
@@ -140,11 +136,10 @@ sudo docker compose down --remove-orphans >/dev/null 2>&1 || true
 sudo docker compose pull -q
 sudo docker compose up -d
 
-# -------------------------------------------------------------
-# 7. Healthcheck
-# -------------------------------------------------------------
+
 echo "Warte auf Dashboard-Start..."
 URL="http://localhost:${PORT}/api/health"
+#Max 15 versuche 2 sek pause
 RETRIES=15
 for ((i=1; i<=RETRIES; i++)); do
   if curl -fsS "$URL" >/dev/null 2>&1; then
@@ -154,15 +149,13 @@ for ((i=1; i<=RETRIES; i++)); do
   sleep 2
 done
 
-# -------------------------------------------------------------
-# 8. Service Installation (Daemon) - DER WICHTIGE FIX
-# -------------------------------------------------------------
-echo "Installiere Update-Daemon..."
 
+
+echo "Installiere Update-Daemon..."
+# Alles löschen was probleme machen könnte
 if [ -d "$DAEMON_DIR" ]; then
     cd "$DAEMON_DIR"
     
-    # ALLES LÖSCHEN, was Probleme machen könnte
     echo "Bereinige alte Module..."
     sudo rm -rf node_modules package-lock.json
     
@@ -178,6 +171,8 @@ fi
 SERVICE_NAME="customer-dashboard-daemon"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
+#System unit erstellen
+# läuft als user customer-Dashboard -> Gruppe docker, damit docker genutzt wwerden kann -> restart always für robustheit
 sudo tee "$SERVICE_FILE" >/dev/null <<EOF
 [Unit]
 Description=Customer Dashboard Auto Update Daemon
@@ -198,9 +193,12 @@ ReadWritePaths=$INSTALL_DIR
 WantedBy=multi-user.target
 EOF
 
+#Systemd neu laden und service aktivieren + starten
 sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
 sudo systemctl restart "$SERVICE_NAME"
+
+
 
 echo
 echo "==========================================="

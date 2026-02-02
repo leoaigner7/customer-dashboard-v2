@@ -1,21 +1,29 @@
 services:
   dashboard:
+  #Docker image das gestartet wird
+  # APP_Version kommt aus der .env
     image: ghcr.io/leoaigner7/customer-dashboard-v2:${APP_VERSION}
     env_file: 
+    # lädt Env-Variabeln aus der .evn-Datei
       - .env
     environment:
-      # SQLite-DB in ein persistentes Volume legen
+    #Pfad zur SQL-DB im Container || wir auf ein volume gemappt -> Daten persistent
       - DB_PATH=/data/database.db
-      # Optional: Statusfile (falls dein Daemon/Backend es nutzt) auch persistieren
+      # PFad zur Statusdatei des Daemon || auch persistent 
       - STATUS_FILE=/logs/update-status.json
+
+      #Port Mapping -> Host_Port : Container_ Port  || Standard: 8080 auf dem Host -> 3000 im Container
     ports:
       - "${APP_PORT:-8080}:3000"
+      # sorgen dafür, dass Daten Container Neustart überleben
     volumes:
-      
+      # persistente DB, logs & statusdatei
      - db_data:/data      
      - dashboard_logs:/logs
 
+# container wird auto. neugestartet -> außer manuell gestoppt
     restart: unless-stopped
+    # Docker Healthcheck -> Backend erreichbar?
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 15s
@@ -26,6 +34,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-volumes:    # Definition der Volumes am Ende der Datei
+volumes:    # Definition der Volumes am Ende der Datei || Volumen für DB,Logs und Statusdatei
   db_data:
   dashboard_logs:  

@@ -1,4 +1,5 @@
 const express = require("express");
+// um Passwörter sicher zu hashen (nicht im Klartext speichern)
 const bcrypt = require("bcryptjs");
 const db = require("../db");
 const { authMiddleware } = require("../auth");
@@ -21,11 +22,12 @@ router.get("/", authMiddleware("admin"), (req, res) => {
 // Admin: Benutzer anlegen
 router.post("/", authMiddleware("admin"), async (req, res) => {
   const { email, password, role = "user" } = req.body;
-
+// Validierung 
   if (!email || !password)
     return res.status(400).json({ error: "email und password sind erforderlich" });
 
   try {
+    // Passwort sicher hashn
     const hash = await bcrypt.hash(password, 10);
 
     db.prepare(
@@ -45,7 +47,7 @@ router.post("/", authMiddleware("admin"), async (req, res) => {
 router.put("/:id/password", authMiddleware(), async (req, res) => {
   const userId = parseInt(req.params.id, 10);
   const { newPassword } = req.body;
-
+// Validierung 
   if (!newPassword)
     return res.status(400).json({ error: "newPassword fehlt" });
 
@@ -54,9 +56,9 @@ router.put("/:id/password", authMiddleware(), async (req, res) => {
     if (req.user.role !== "admin" && req.user.id !== userId) {
       return res.status(403).json({ error: "Keine Berechtigung" });
     }
-
+// neues PW hashen
     const hash = await bcrypt.hash(newPassword, 10);
-
+// PW Hash in der DB aktualisieren
     db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, userId);
 
     res.json({ status: "ok" });

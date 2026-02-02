@@ -1,16 +1,11 @@
-# =========================================================
-# Customer Dashboard Installer (VERSION 4.2 – CLEAN FIXED)
-# =========================================================
-
+# Installer Windows
 param (
     [string]$ComposeFile = "docker-compose.yml"
 )
 
 Write-Host "=== Customer Dashboard Installer (Windows) ==="
 
-# -------------------------------------------------------------
-# 0. ADMIN CHECK
-# -------------------------------------------------------------
+# ADMIN CHECK -> viele Schritte brauchen admin rechte
 $principal = New-Object Security.Principal.WindowsPrincipal `
     ([Security.Principal.WindowsIdentity]::GetCurrent())
 
@@ -19,37 +14,32 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     exit 1
 }
 
-# -------------------------------------------------------------
-# 1. PATHS
-# -------------------------------------------------------------
+# PATHS
+# Basispfade wo alles installiert wird
 $InstallDir   = "C:\CustomerDashboard"
 $DeployDir    = "$InstallDir\deploy"
 $DaemonDir    = "$InstallDir\system-daemon"
 $LogDir       = "$InstallDir\logs"
 
+# Pfade zur node.exe und zum Daemon-entry-point
 $NodeExe   = "C:\Program Files\nodejs\node.exe"
 $DaemonJs = "$DaemonDir\daemon.js"
 
 Write-Host "Installationsverzeichnis: $InstallDir"
 
-# -------------------------------------------------------------
-# 2. DIRECTORIES
-# -------------------------------------------------------------
+#  Verzeichnisse anlegen
 Write-Host "Erstelle Verzeichnisse..."
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path $DeployDir  | Out-Null
 New-Item -ItemType Directory -Force -Path $DaemonDir  | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir     | Out-Null
 
-# -------------------------------------------------------------
-# 3. COPY FILES (identisch zu FINAL CLEAN)
-# -------------------------------------------------------------
+#  Kopiert das Deployment und den Daemon auf das Zielsystem
 Write-Host "Kopiere Dateien..."
 Copy-Item -Recurse -Force "..\deploy\*"        $DeployDir
 Copy-Item -Recurse -Force "..\system-daemon\*" $DaemonDir
-# -------------------------------------------------------------
-# 3.1 DEPLOY-PERSISTENZORDNER (Docker Volumes)
-# -------------------------------------------------------------
+
+#Ordner für Persistente Daten
 $DeployDataDir = Join-Path $DeployDir "data"
 $DeployLogsDir = Join-Path $DeployDir "logs"
 
@@ -57,9 +47,8 @@ Write-Host "Erzeuge Deploy-Persistenzordner (data, logs)..."
 New-Item -ItemType Directory -Force -Path $DeployDataDir | Out-Null
 New-Item -ItemType Directory -Force -Path $DeployLogsDir | Out-Null
 
-# -------------------------------------------------------------
-# 3.2 INSTALL TRUSTED PUBLIC KEY (SIGNATURE VERIFICATION)
-# -------------------------------------------------------------
+
+# Public Key wird benötigt, damit der Daemon Artefakte kryptografisch verifizieren kann 
 Write-Host "Installiere Update-Signatur (Public Key)..."
 
 $TrustDir = "$DaemonDir\trust"
@@ -68,22 +57,23 @@ $TargetPublicKey = "$TrustDir\updater-public.pem"
 
 New-Item -ItemType Directory -Force -Path $TrustDir | Out-Null
 
+# wenn key fehlt, Update verifizierung nicht möglich - > abbruch der Installation
 if (-not (Test-Path $SourcePublicKey)) {
     Write-Error "Public Key fehlt im Paket: $SourcePublicKey"
     exit 1
 }
-
+# Public Key ins Installations zecihnis kopiern
 Copy-Item -Force $SourcePublicKey $TargetPublicKey
 
+#schaun ob key wirklich angekommen ist
 if (-not (Test-Path $TargetPublicKey)) {
     Write-Error "Public Key konnte nicht installiert werden."
     exit 1
 }
 
 Write-Host "Public Key erfolgreich installiert."
-# -------------------------------------------------------------
-# 3.3 LEAST PRIVILEGE: Service-User anlegen + Rechte + docker-users
-# -------------------------------------------------------------
+
+# Daemon soll NICHT als ADMIN laufen -> unter eingeschränkten LOKALEN USER
 $SvcUser = "CustomerDashboardSvc"
 $SvcUserFull = "$env:COMPUTERNAME\$SvcUser"
 
@@ -92,10 +82,12 @@ Add-Type -AssemblyName System.Web
 $SvcPassPlain = [System.Web.Security.Membership]::GeneratePassword(32, 6)
 $SvcPass = ConvertTo-SecureString $SvcPassPlain -AsPlainText -Force
 
-# User anlegen, falls nicht vorhanden
+# User anlegen oder PW aktualisieren
 if (Get-LocalUser -Name $SvcUser -ErrorAction SilentlyContinue) {
+
     Set-LocalUser -Name $SvcUser -Password $SvcPass
 } else {
+    # User neu anlegen
     New-LocalUser `
         -Name $SvcUser `
         -Password $SvcPass `
@@ -105,34 +97,33 @@ if (Get-LocalUser -Name $SvcUser -ErrorAction SilentlyContinue) {
         -AccountNeverExpires | Out-Null
 }
 
-# Ordnerrechte (Modify reicht i.d.R.)
-# Ordnerrechte (Modify reicht i.d.R.)
+# Ordnerrechte setzten (modify (M) reicht in der regel)
 icacls $InstallDir /grant "${SvcUserFull}:(OI)(CI)M" /T | Out-Null
 icacls $LogDir     /grant "${SvcUserFull}:(OI)(CI)M" /T | Out-Null
 icacls $DeployDir  /grant "${SvcUserFull}:(OI)(CI)M" /T | Out-Null
 icacls $DaemonDir  /grant "${SvcUserFull}:(OI)(CI)M" /T | Out-Null
 
-
-# Docker Desktop: Zugriff auf Docker Engine via Gruppe docker-users
+# DOcker Engine wird typischerweise über Gruppe "Docker Users" gesteuert -> ohne gruppe -> docker compose evtl. nicht ausführbar
 try {
     Add-LocalGroupMember -Group "docker-users" -Member $SvcUser -ErrorAction Stop
 } catch {
     Write-Warning "Konnte '$SvcUser' nicht zur Gruppe 'docker-users' hinzufügen. Prüfe Docker Desktop / Gruppenname."
 }
-# -------------------------------------------------------------
-# 3.4 AUTOSTART: Scheduled Task (At Startup) unter Service-User
-# -------------------------------------------------------------
+
+# Scheduled task der beim Booten startet -> lässt Daemon laufen ohne das ein user eingeloggt ist
 $TaskName = "CustomerDashboardDaemon"
 
 if (Get-LocalUser -Name $SvcUser -ErrorAction SilentlyContinue) {
     Set-LocalUser -Name $SvcUser -Password $SvcPass
 }
 
-# Vorhandenen Task ggf. ersetzen
+# vorhandenen task entf.
 try {
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
 } catch { }
-# Task Action: node.exe daemon.js
+
+
+# Task Action: node.exe daemon.js ausführen
 $Action  = New-ScheduledTaskAction `
   -Execute $NodeExe `
   -Argument "`"$DaemonJs`""
@@ -141,7 +132,7 @@ $Action  = New-ScheduledTaskAction `
 # Trigger: beim Systemstart (läuft auch ohne Login)
 $Trigger = New-ScheduledTaskTrigger -AtStartup
 
-# Settings: robust, restart on failure
+# Settings: robust, fehler neustarten
 $Settings = New-ScheduledTaskSettingsSet `
   -StartWhenAvailable `
   -AllowStartIfOnBatteries `
@@ -150,7 +141,7 @@ $Settings = New-ScheduledTaskSettingsSet `
   -RestartInterval (New-TimeSpan -Minutes 1) `
   -MultipleInstances IgnoreNew
 
-# Principal: Least Privilege, KEIN Highest
+# Principal: läuft unter service User, kein "Highest"
 $Principal = New-ScheduledTaskPrincipal `
   -UserId $SvcUserFull `
   -LogonType Password `
@@ -172,9 +163,8 @@ Register-ScheduledTask `
 
 Write-Host "Scheduled Task '$TaskName' erstellt (AtStartup) unter $SvcUserFull." -ForegroundColor Green
 
-# -------------------------------------------------------------
-# 4. DOCKER
-# -------------------------------------------------------------
+
+#dashboard starten
 Write-Host "Starte Dashboard..."
 Set-Location $DeployDir
 
@@ -182,14 +172,14 @@ docker compose down | Out-Null
 docker compose pull
 docker compose up -d
 
-# -------------------------------------------------------------
-# 5. HEALTHCHECK
-# -------------------------------------------------------------
+
+#Prüfen ob das Dashboard wirklich erreichbar ist
 Write-Host "Prüfe Dashboard Healthcheck..."
 
 $healthUrl = "http://localhost:8080/api/health"
 $ok = $false
 
+#max 20 versuche jeweils 2 sek pause 
 for ($i = 1; $i -le 20; $i++) {
     try {
         $res = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
@@ -207,12 +197,13 @@ if ($ok) {
 } else {
     Write-Host "WARNUNG: Dashboard antwortet nicht, fahre fort." -ForegroundColor Yellow
 }
-# -------------------------------------------------------------
-# 6. START DAEMON via Scheduled Task
-# -------------------------------------------------------------
+
+
+#Daemon sofort starten -> damit Updates/status direkt laufen
 Write-Host "Starte Auto-Update-Daemon via Scheduled Task..."
 Start-ScheduledTask -TaskName $TaskName
 Start-Sleep 3
+
 
 $info = Get-ScheduledTaskInfo -TaskName $TaskName
 Write-Host "Task State: $($info.State), LastResult: $($info.LastTaskResult)"
@@ -226,9 +217,8 @@ if (-not (Get-Process node -ErrorAction SilentlyContinue)) {
 
 Write-Host "Node läuft erfolgreich." -ForegroundColor Green
 
-# -------------------------------------------------------------
-# 7. DONE
-# -------------------------------------------------------------
+
+
 Write-Host ""
 Write-Host "INSTALLATION ERFOLGREICH"
 Write-Host "Dashboard: http://localhost:8080/"

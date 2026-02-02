@@ -1,7 +1,8 @@
+//SQL Wrapper für node.js
 const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
-
+// Datenbankpfad
 const DB_PATH =
   process.env.DB_PATH ||
   path.join(__dirname, "database.db");
@@ -10,8 +11,9 @@ const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
+// Verbindung zur SQL-Datenbank öffnen -> DB Datei wird automatisch erstellt, falls nicht vorhanden
 const db = new Database(DB_PATH);
-
+// WAL -> Write Ahead Logging 
 db.pragma('journal_mode = WAL');
 // Tabellen anlegen, falls nicht vorhanden
 db.exec(`
@@ -47,7 +49,7 @@ CREATE TABLE IF NOT EXISTS update_history (
 );
 `);
 
-// Seed-Admin Logik (Reparatur-Modus)
+//feste admin Mail
 const adminEmail = 'admin@example.com';
 const adminUser = db.prepare("SELECT * FROM users WHERE email = ?").get(adminEmail);
 
@@ -66,7 +68,7 @@ if (!adminUser) {
   console.log(`[SEED] Admin neu erzeugt: ${adminEmail} / ${initialPass}`);
 
 } else {
-  // 2. Fall: Benutzer existiert schon (vielleicht kaputt?) -> Passwort RESETTEN!
+  // 2. Fall: Benutzer existiert schon  -> Passwort RESETTEN!
   // Das repariert Ihren Login automatisch beim Neustart
   db.prepare(
     "UPDATE users SET password_hash = ? WHERE email = ?"

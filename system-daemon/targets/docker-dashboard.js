@@ -1,19 +1,8 @@
-// system-daemon/targets/docker-dashboard.js
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
-/**
- * Zentrale Log-Funktion für Daemon & Targets.
- * Schreibt JSON-Zeilen in eine Logdatei, damit sowohl Menschen
- * als auch Maschinen das gut lesen/analysieren können.
- *
- * Felder:
- *  - ts:    ISO-Zeitstempel
- *  - level: debug|info|warn|error
- *  - msg:   kurze, klare Beschreibung
- *  - extra: optionale Zusatzinfos (z.B. Version, Dauer, Fehlertext)
- */
+
 function log(level, message, config, extra = undefined) {
   const logFile =
     (config &&
@@ -64,13 +53,13 @@ function readEnvVersion(config) {
   return value || null;
 }
 
-/**
- * Schreibt eine Version in die .env-Datei (APP_VERSION=...).
- */
+
+ //Schreibt eine Version in die .env-Datei (APP_VERSION=) -> Nach dem Update APP_VERSION aktualisieren, damit docker compose beim nächsten Start das richtige Image nutzt
+ 
 function writeEnvVersion(config, version) {
   const envFile = config.target.envFile;
   const key = config.target.versionKey || "APP_VERSION";
-
+// bestehende datei einlesen
   let lines = [];
   if (fs.existsSync(envFile)) {
     lines = fs.readFileSync(envFile, "utf8").split(/\r?\n/);
@@ -92,10 +81,9 @@ function writeEnvVersion(config, version) {
   fs.writeFileSync(envFile, newLines.join("\n"), "utf8");
 }
 
-/**
- * Führt ein Kommando (z. B. docker) aus, sammelt stdout/stderr
- * und loggt Start, Ende, Fehlercode & Dauer.
- */
+//Führt ein Kommando (z. B. docker) aus, sammelt stdout/stderr
+
+
 function runCommand(command, args, options = {}, config) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
@@ -150,9 +138,8 @@ function runCommand(command, args, options = {}, config) {
   });
 }
 
-/**
- * Lädt ein Docker-Image (docker pull).
- */
+
+ //Lädt ein Docker-Image (docker pull).
 async function downloadImage(config, version) {
   const template = config.sources.github.imageTemplate;
   const image = template.replace("{version}", version);
@@ -161,7 +148,7 @@ async function downloadImage(config, version) {
     image,
     version,
   });
-
+ //docker image pullen 
   await runCommand("docker", ["pull", image], {}, config);
 
   log("info", "Docker-Image erfolgreich geladen", config, {
@@ -171,10 +158,9 @@ async function downloadImage(config, version) {
 
   return image;
 }
-/**
- * Stoppt das Dashboard via docker compose down (OHNE -v!)
- * Wichtig: -v darf NICHT verwendet werden (würde Volumes löschen -> Datenverlust).
- */
+
+ // Stoppt das Dashboard via docker compose down (OHNE -v!) -> WICHTIG: -v darf NICHT verwendet werden (würde Volumes löschen -> Datenverlust).
+ 
 async function stopDashboard(config) {
   const composeFile = config.target.composeFile;
 
@@ -188,9 +174,9 @@ async function stopDashboard(config) {
   );
 }
 
-/**
- * Startet das Dashboard via docker compose up -d
- */
+
+ // Startet das Dashboard via docker compose up -d
+ 
 async function startDashboard(config) {
   const composeFile = config.target.composeFile;
 
@@ -204,10 +190,8 @@ async function startDashboard(config) {
   );
 }
 
-/**
- * Optional: zieht die Images neu (docker compose pull)
- * (Wird bei ZIP-Update nicht zwingend gebraucht, aber sauber für Symmetrie.)
- */
+// Optional: zieht die Images neu (docker compose pull)
+ 
 async function pullDashboard(config) {
   const composeFile = config.target.composeFile;
 
@@ -222,12 +206,8 @@ async function pullDashboard(config) {
 }
 
 
-/**
- * Startet das Dashboard via docker compose neu:
- *  - docker compose down
- *  - docker compose pull
- *  - docker compose up -d
- */
+// Startet das Dashboard via docker compose neu:garantiert Neustart mit neuem Image
+
 async function restartDashboard(config) {
   const composeFile = config.target.composeFile;
 
@@ -261,10 +241,10 @@ async function restartDashboard(config) {
   });
 }
 
-/**
- * Healthcheck: /api/health des Dashboards.
- * Versucht mehrfach (bis zu maxAttempts), mit Wartezeit dazwischen.
- */
+
+ // Healthcheck: /api/health des Dashboards prüfen .
+// Versucht mehrfach (bis zu maxAttempts), mit Wartezeit dazwischen.
+ 
 async function checkHealth(config, maxAttempts = 20, delayMs = 2000) {
   const url = config.target.healthUrl;
   if (!url) {
@@ -281,8 +261,7 @@ async function checkHealth(config, maxAttempts = 20, delayMs = 2000) {
       const started = Date.now();
 
       const req = http.get(url, (res) => {
-        res.resume(); // Body wird nicht benötigt
-
+        res.resume(); 
         const ok = res.statusCode >= 200 && res.statusCode < 400;
         const durationMs = Date.now() - started;
 
@@ -315,7 +294,7 @@ async function checkHealth(config, maxAttempts = 20, delayMs = 2000) {
 
         setTimeout(() => tryCheck(attempt + 1), delayMs);
       });
-
+      // Netzwerkfehler
       req.on("error", (err) => {
         const durationMs = Date.now() - started;
 
